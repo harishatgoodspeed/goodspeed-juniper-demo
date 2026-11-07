@@ -39,6 +39,11 @@ const schema = z.object({
   // file/engine/box should render at ~1.0; this just leaves headroom for
   // anti-aliasing, never for a genuinely different asset.
   LOGO_SIMILARITY_THRESHOLD: z.coerce.number().min(0).max(1).default(0.9),
+  // How close (CIEDE2000) a pixel in a free-tool "check this against our
+  // brand" upload must be to an approved colour to count as a match.
+  // Deliberately more lenient than COLOUR_DELTA_E_THRESHOLD — an upload may
+  // be a photo, screenshot, or re-compressed export we don't control.
+  UPLOAD_COLOUR_MATCH_THRESHOLD: z.coerce.number().positive().default(12),
   RETENTION_DAYS: z.coerce.number().int().positive().default(30),
 
   // PLACEHOLDER values — tune once real free-tool traffic/cost data exists.

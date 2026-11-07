@@ -27,6 +27,10 @@ import { computeOverallPass } from "./review/review";
 import { createShare, getShare, listActiveSharesForBrand, revokeShare } from "./shares";
 import { canAccessBrand, isOwner } from "./security/brand-access";
 import { renderSharePage } from "./share-page";
+import { buildBrandMarkdown } from "./snapshot";
+import { checkUploadAgainstBrand, UploadDecodeError } from "./review/upload-check";
+import type { ApprovedBrandContext } from "./llm";
+import type { BrandContext } from "./import/types";
 
 function notFoundPage(): string {
   return `<!doctype html><html lang="en-GB"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="robots" content="noindex, nofollow"><title>Page not found</title>
@@ -152,6 +156,101 @@ export function createApp() {
     }
     fs.createReadStream(asset.local_path).pipe(res);
   });
+
+  // Free-tool brand snapshot: a Claude-ready brand.md download with the
+  // approved palette/fonts/voice, zero contact required. Shared with the
+  // same access rule as other brand assets (owner, or a valid share token).
+  app.get("/api/brands/:id/snapshot.md", requireAuth, (req, res) => {
+    const brand = getBrand(db, req.params.id);
+    if (!brand || !canAccessBrand(req, db, brand)) {
+      res.status(404).json({ error: "not_found" });
+      return;
+    }
+    if (!brand.context_json || !brand.approved_context_json) {
+      res.status(409).json({ error: "not_ready", message: "Approve a brand selection before downloading a snapshot." });
+      return;
+    }
+    const rawContext = JSON.parse(brand.context_json) as BrandContext;
+    const approvedRaw = JSON.parse(brand.approved_context_json) as Partial<ApprovedBrandContext>;
+    const approvedContext: ApprovedBrandContext = {
+      logoAssetId: approvedRaw.logoAssetId ?? null,
+      colours: Array.isArray(approvedRaw.colours) ? approvedRaw.colours : [],
+      fonts: Array.isArray(approvedRaw.fonts) ? approvedRaw.fonts : [],
+      voiceNotes: typeof approvedRaw.voiceNotes === "string" ? approvedRaw.voiceNotes : "",
+    };
+    const markdown = buildBrandMarkdown({ sourceUrl: brand.source_url, rawContext, approvedContext });
+    res.set("Content-Type", "text/markdown; charset=utf-8");
+    res.set("Content-Disposition", 'attachment; filename="brand-snapshot.md"');
+    res.send(markdown);
+  });
+
+  // Free-tool "check this against our brand" upload review — colour only,
+  // deliberately (see upload-check.ts's module doc for why). A separate,
+  // larger JSON body limit applies only to this route; every other route
+  // keeps the tight 100kb default above.
+  const UPLOAD_CHECK_MAX_BYTES = 5 * 1024 * 1024;
+  const ALLOWED_UPLOAD_MIME = new Set(["image/png", "image/jpeg", "image/webp", "image/gif"]);
+  const uploadCheckLimiterByOwner = new SlidingWindowLimiter(10, 60 * 60 * 1000);
+
+  app.post(
+    "/api/brands/:id/check-upload",
+    requireAuth,
+    requireCsrf,
+    express.json({ limit: "8mb" }),
+    async (req, res) => {
+      const brand = getBrand(db, req.params.id);
+      if (!brand || !canAccessBrand(req, db, brand)) {
+        res.status(404).json({ error: "not_found" });
+        return;
+      }
+      if (!uploadCheckLimiterByOwner.check(req.auth!.ownerId)) {
+        res.status(429).json({ error: "rate_limited", message: "Upload-check limit reached: 10 per hour." });
+        return;
+      }
+
+      const mimeType = typeof req.body?.mimeType === "string" ? req.body.mimeType : "";
+      const imageBase64 = typeof req.body?.imageBase64 === "string" ? req.body.imageBase64 : "";
+      if (!ALLOWED_UPLOAD_MIME.has(mimeType) || !imageBase64) {
+        res.status(400).json({
+          error: "invalid_body",
+          message: "mimeType (image/png, image/jpeg, image/webp, or image/gif) and imageBase64 are required.",
+        });
+        return;
+      }
+
+      const buffer = Buffer.from(imageBase64, "base64");
+      if (buffer.length === 0 || buffer.length > UPLOAD_CHECK_MAX_BYTES) {
+        res.status(400).json({
+          error: "invalid_body",
+          message: `Image must be non-empty and under ${UPLOAD_CHECK_MAX_BYTES} bytes.`,
+        });
+        return;
+      }
+
+      const approved = brand.approved_context_json
+        ? (JSON.parse(brand.approved_context_json) as Partial<ApprovedBrandContext>)
+        : null;
+      const approvedColours = approved && Array.isArray(approved.colours) ? approved.colours : [];
+      if (approvedColours.length === 0) {
+        res.status(409).json({
+          error: "no_palette",
+          message: "No colours were approved for this brand yet — approve a selection first.",
+        });
+        return;
+      }
+
+      try {
+        const result = await checkUploadAgainstBrand(buffer, mimeType, approvedColours, config.UPLOAD_COLOUR_MATCH_THRESHOLD);
+        res.json(result);
+      } catch (err) {
+        if (err instanceof UploadDecodeError) {
+          res.status(400).json({ error: "undecodable_image", message: err.message });
+          return;
+        }
+        res.status(500).json({ error: "check_failed", message: "Could not analyse the uploaded image." });
+      }
+    }
+  );
 
   app.patch("/api/brands/:id", requireAuth, requireCsrf, (req, res) => {
     const brand = getBrand(db, req.params.id);
