@@ -5,25 +5,22 @@
 // `process.env.X = ...` placed "before" an import is not reliably seen by
 // config.ts, which reads process.env once at import time. --env-file sets
 // the environment before the process (and so any module) starts at all.
-// With NODE_ENV=test, config.ts itself falls back to known test constants
-// for APP_ACCESS_CODE/SESSION_SECRET — asserted against directly below.
+// With NODE_ENV=test, config.ts itself falls back to a known test constant
+// for SESSION_SECRET — asserted against directly below.
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import type { AddressInfo } from "node:net";
+import express from "express";
 import { config } from "../src/config";
 import { openTestDb } from "../src/db";
-import { accessCodeMatches, sign, verifySigned, createSession, getValidSession, getOrCreateDefaultOwner } from "../src/security/session";
+import { sign, verifySigned, createSession, getValidSession, createAnonymousOwner } from "../src/security/session";
+import { attachSession } from "../src/security/auth-middleware";
+import { cookieMiddleware } from "../src/security/cookies";
 
 test("test environment is wired correctly (sanity check for the rest of this file)", () => {
   assert.equal(config.NODE_ENV, "test");
-  assert.equal(config.APP_ACCESS_CODE, "test-access-code");
-});
-
-test("accessCodeMatches accepts only the exact configured code", () => {
-  assert.equal(accessCodeMatches("test-access-code"), true);
-  assert.equal(accessCodeMatches("wrong"), false);
-  assert.equal(accessCodeMatches(""), false);
-  assert.equal(accessCodeMatches("test-access-cod"), false); // one char short
+  assert.ok(config.SESSION_SECRET.length > 0);
 });
 
 test("sign/verifySigned round-trips and rejects tampering", () => {
@@ -44,7 +41,7 @@ test("sign/verifySigned with a different secret does not validate", () => {
 
 test("sessions: created sessions validate, expired ones do not", () => {
   const db = openTestDb();
-  const ownerId = getOrCreateDefaultOwner(db);
+  const ownerId = createAnonymousOwner(db);
   const session = createSession(db, ownerId);
   assert.ok(getValidSession(db, session.id));
 
@@ -55,11 +52,60 @@ test("sessions: created sessions validate, expired ones do not", () => {
   assert.equal(stillThere, undefined, "expired session row should be cleaned up on read");
 });
 
-test("getOrCreateDefaultOwner is idempotent", () => {
+test("createAnonymousOwner makes a genuinely new, isolated owner every time — never a shared default", () => {
   const db = openTestDb();
-  const a = getOrCreateDefaultOwner(db);
-  const b = getOrCreateDefaultOwner(db);
-  assert.equal(a, b);
+  const a = createAnonymousOwner(db);
+  const b = createAnonymousOwner(db);
+  assert.notEqual(a, b, "two visitors must never get the same owner id");
   const count = db.prepare("SELECT count(*) as n FROM owners").get() as { n: number };
-  assert.equal(count.n, 1);
+  assert.equal(count.n, 2);
+});
+
+test("attachSession stops provisioning brand-new workspaces for one IP after 20 in an hour, so identity-cycling to dodge the per-visitor spend cap has a real ceiling", async () => {
+  const db = openTestDb();
+  const app = express();
+  app.use(cookieMiddleware);
+  app.use(attachSession(db));
+  app.get("/", (req, res) => res.json({ ownerId: req.auth?.ownerId ?? null }));
+  const server = app.listen(0, "127.0.0.1");
+  await new Promise((resolve) => server.once("listening", resolve));
+  const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+  try {
+    const statuses: number[] = [];
+    for (let i = 0; i < 21; i++) {
+      // No cookie on any of these — every single one asks for a brand-new workspace.
+      const res = await fetch(base);
+      statuses.push(res.status);
+    }
+    assert.ok(statuses.slice(0, 20).every((s) => s === 200), "the first 20 new-workspace requests should succeed");
+    assert.equal(statuses[20], 429, "the 21st new-workspace request from the same IP within the hour should be rate limited");
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
+});
+
+test("a visitor who already has a valid session is never counted against the new-workspace limit", async () => {
+  const db = openTestDb();
+  const app = express();
+  app.use(cookieMiddleware);
+  app.use(attachSession(db));
+  app.get("/", (req, res) => res.json({ ownerId: req.auth?.ownerId ?? null }));
+  const server = app.listen(0, "127.0.0.1");
+  await new Promise((resolve) => server.once("listening", resolve));
+  const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+  try {
+    const first = await fetch(base);
+    const setCookies = typeof first.headers.getSetCookie === "function" ? first.headers.getSetCookie() : [];
+    const sessionCookie = setCookies.find((c) => c.startsWith("gs_session="))?.split(";")[0];
+    assert.ok(sessionCookie);
+
+    // Reusing the same real session cookie 25 times must never trip the
+    // new-workspace limiter, since no new workspace is being provisioned.
+    for (let i = 0; i < 25; i++) {
+      const res = await fetch(base, { headers: { Cookie: sessionCookie! } });
+      assert.equal(res.status, 200);
+    }
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
 });

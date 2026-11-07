@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { openTestDb } from "../src/db";
 import { createBrand, setBrandContext, setApprovedContext } from "../src/brands";
-import { getOrCreateDefaultOwner } from "../src/security/session";
+import { createAnonymousOwner } from "../src/security/session";
 import { createRun, getRun } from "../src/runs";
 import { enqueueJob } from "../src/jobs";
 import { runBriefJob } from "../src/jobs/run-brief-job";
@@ -60,7 +60,7 @@ function fakeBriefSet(): BriefSet {
 
 function setUp() {
   const db = openTestDb();
-  const ownerId = getOrCreateDefaultOwner(db);
+  const ownerId = createAnonymousOwner(db);
   const brand = createBrand(db, ownerId, "https://example.com");
   setBrandContext(db, brand.id, minimalContext());
   setApprovedContext(db, brand.id, { logoAssetId: null, colours: ["#C6DD66"], fonts: ["Inter"] });
@@ -106,7 +106,7 @@ test("runBriefJob marks the run failed and rethrows when brief generation throws
 
 test("runBriefJob throws clearly if the brand has no approved context yet", async () => {
   const db = openTestDb();
-  const ownerId = getOrCreateDefaultOwner(db);
+  const ownerId = createAnonymousOwner(db);
   const brand = createBrand(db, ownerId, "https://example.com");
   setBrandContext(db, brand.id, minimalContext());
   // no setApprovedContext call

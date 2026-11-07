@@ -2,7 +2,6 @@
   "use strict";
 
   const views = {
-    login: document.getElementById("loginView"),
     import: document.getElementById("importView"),
     result: document.getElementById("resultView"),
   };
@@ -36,28 +35,14 @@
     return body;
   }
 
-  // --- Login ---
-  const loginForm = document.getElementById("loginForm");
-  const loginError = document.getElementById("loginError");
-  loginForm.addEventListener("submit", async (e) => {
-    e.preventDefault();
-    loginError.hidden = true;
-    try {
-      await api("/api/login", {
-        method: "POST",
-        body: JSON.stringify({ code: document.getElementById("accessCode").value }),
-      });
-      await boot();
-    } catch (err) {
-      loginError.textContent = err.message;
-      loginError.hidden = false;
-    }
-  });
-
+  // --- Start over (abandons this anonymous workspace; a brand-new one is
+  // provisioned automatically on the next request) ---
   document.getElementById("logoutBtn").addEventListener("click", async () => {
+    if (!confirm("Start a new workspace? This import and anything generated from it will no longer be reachable.")) {
+      return;
+    }
     await api("/api/logout", { method: "POST" }).catch(() => {});
-    document.getElementById("logoutBtn").hidden = true;
-    show(views.login);
+    location.reload();
   });
 
   // --- Import ---
@@ -452,20 +437,17 @@
   });
 
   // --- Boot ---
+  // No login step — the server silently provisions an isolated, anonymous
+  // workspace on first visit (see attachSession in auth-middleware.ts).
   async function boot() {
-    const { authenticated } = await api("/api/session");
-    if (!authenticated) {
-      show(views.login);
-      document.getElementById("logoutBtn").hidden = true;
-      return;
-    }
-    document.getElementById("logoutBtn").hidden = false;
+    await api("/api/session");
     show(views.import);
     await loadBrandList();
   }
 
   boot().catch((err) => {
     console.error(err);
-    show(views.login);
+    importError.textContent = `Could not start: ${err.message}`;
+    importError.hidden = false;
   });
 })();

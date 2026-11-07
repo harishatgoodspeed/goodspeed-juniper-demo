@@ -21,9 +21,10 @@ const schema = z.object({
   DATABASE_PATH: z.string().default("./data/app.db"),
   ASSET_DIR: z.string().default("./data/assets"),
 
-  // Required in production; a dev fallback keeps local setup frictionless without
-  // ever allowing the same relaxed default in production.
-  APP_ACCESS_CODE: z.string().optional(),
+  // No login step — every visitor gets an anonymous, isolated workspace (see
+  // src/security/session.ts). SESSION_SECRET still signs those session
+  // cookies, so it stays required in production; a dev fallback keeps local
+  // setup frictionless without ever allowing that relaxed default in prod.
   SESSION_SECRET: z.string().optional(),
 
   ANTHROPIC_API_KEY: z.string().optional(),
@@ -35,36 +36,49 @@ const schema = z.object({
   COLOUR_DELTA_E_THRESHOLD: z.coerce.number().positive().default(4),
   RETENTION_DAYS: z.coerce.number().int().positive().default(30),
 
+  // PLACEHOLDER values — tune once real free-tool traffic/cost data exists.
+  // Estimated from Claude Sonnet 5.5 list pricing ($2/$10 per MTok); see
+  // estimateUsdCost() below, used to gate POST /api/brands/:id/runs.
+  PER_VISITOR_DAILY_SPEND_USD: z.coerce.number().positive().default(2.0),
+  GLOBAL_DAILY_SPEND_USD: z.coerce.number().positive().default(50.0),
+
+  // PLACEHOLDER — optional. When set, a notification is posted here on every
+  // new email-capture submission (see src/leads.ts). No-op when unset.
+  SLACK_WEBHOOK_URL: z.string().url().optional(),
+
   IMAGE_PROVIDER: z.string().optional(),
   IMAGE_PROVIDER_API_KEY: z.string().optional(),
 });
 
 const parsed = schema.parse(process.env);
 
-if (parsed.NODE_ENV === "production") {
-  const missing: string[] = [];
-  if (!parsed.APP_ACCESS_CODE) missing.push("APP_ACCESS_CODE");
-  if (!parsed.SESSION_SECRET) missing.push("SESSION_SECRET");
-  if (missing.length) {
-    throw new Error(
-      `Missing required production configuration: ${missing.join(", ")}. See .env.example.`
-    );
-  }
+if (parsed.NODE_ENV === "production" && !parsed.SESSION_SECRET) {
+  throw new Error("Missing required production configuration: SESSION_SECRET. See .env.example.");
 }
 
-// Dev/test fallbacks so the app still boots locally, clearly marked as insecure.
-const accessCode =
-  parsed.APP_ACCESS_CODE ?? (isTest ? "test-access-code" : "dev-only-change-me");
+// Dev/test fallback so the app still boots locally, clearly marked as insecure.
 const sessionSecret =
   parsed.SESSION_SECRET ??
   (isTest ? "test-session-secret-0000000000000000" : "dev-only-session-secret-change-me");
 
+// Sonnet 5.5 list pricing, USD per million tokens — see claude-api skill /
+// platform.claude.com/docs/pricing. Used only to estimate spend against the
+// caps above; it is an estimate, not a billing reconciliation.
+const SONNET_5_5_INPUT_USD_PER_MTOK = 2.0;
+const SONNET_5_5_OUTPUT_USD_PER_MTOK = 10.0;
+
+export function estimateUsdCost(promptTokens: number, completionTokens: number): number {
+  return (
+    (promptTokens / 1_000_000) * SONNET_5_5_INPUT_USD_PER_MTOK +
+    (completionTokens / 1_000_000) * SONNET_5_5_OUTPUT_USD_PER_MTOK
+  );
+}
+
 export const config = {
   ...parsed,
-  APP_ACCESS_CODE: accessCode,
   SESSION_SECRET: sessionSecret,
   hasAnthropicKey: Boolean(parsed.ANTHROPIC_API_KEY),
-  isDevFallbackAuth: !parsed.APP_ACCESS_CODE || !parsed.SESSION_SECRET,
+  isDevFallbackAuth: !parsed.SESSION_SECRET,
 };
 
 export type Config = typeof config;

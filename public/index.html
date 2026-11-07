@@ -9,25 +9,14 @@
 <body>
   <header class="topbar">
     <span class="brand">Goodspeed Brand OS</span>
-    <span class="phase-tag">Private prototype</span>
-    <button id="logoutBtn" class="btn btn-ghost" hidden>Sign out</button>
+    <span class="phase-tag">Free tool</span>
+    <button id="logoutBtn" class="btn btn-ghost">Start over</button>
   </header>
 
   <main id="app" class="wrap">
-    <section id="loginView" hidden>
-      <h1>Sign in</h1>
-      <p>This is a private prototype. Enter the access code to continue.</p>
-      <form id="loginForm" class="stack">
-        <label for="accessCode">Access code</label>
-        <input id="accessCode" name="code" type="password" autocomplete="current-password" required>
-        <button type="submit" class="btn btn-primary">Sign in</button>
-        <p id="loginError" class="error" role="alert" hidden></p>
-      </form>
-    </section>
-
     <section id="importView" hidden>
-      <h1>Import a brand</h1>
-      <p>Paste a public website address. We fetch the page and its stylesheets only, extract a candidate palette, type and logo, and show you exactly where each fact came from before anything is used.</p>
+      <h1>Paste your URL. Get on-brand posts, already checked.</h1>
+      <p>We fetch your site's own palette, type and logo, you approve what to use, and we draft real LinkedIn posts, checked against your brand before you see them. No account, no agent setup.</p>
       <form id="importForm" class="stack">
         <label for="siteUrl">Website address</label>
         <input id="siteUrl" name="url" type="url" placeholder="https://example.com" required>

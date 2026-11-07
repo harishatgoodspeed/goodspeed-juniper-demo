@@ -42,12 +42,12 @@ function closeServer(server: { close: (cb: () => void) => void }): Promise<void>
   return new Promise((resolve) => server.close(resolve));
 }
 
+// No login step: any request auto-provisions an isolated, anonymous session
+// (see attachSession in auth-middleware.ts). Hitting GET /api/session is
+// enough to get one and read its cookies back — kept the name "login" here
+// only to minimise churn across this file's many call sites.
 async function login(base: string): Promise<{ cookie: string; csrf: string }> {
-  const res = await fetch(`${base}/api/login`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ code: "test-access-code" }),
-  });
+  const res = await fetch(`${base}/api/session`);
   assert.equal(res.status, 200);
   const setCookies = typeof res.headers.getSetCookie === "function" ? res.headers.getSetCookie() : [];
   const combined = setCookies.join("; ");

@@ -3,10 +3,9 @@ import type Database from "better-sqlite3";
 import {
   SESSION_COOKIE,
   SESSION_TTL_MS,
-  accessCodeMatches,
+  createAnonymousOwner,
   createSession,
   destroySession,
-  getOrCreateDefaultOwner,
   getValidSession,
   sign,
   verifySigned,
@@ -24,11 +23,46 @@ declare global {
   }
 }
 
-// 10 failed access-code attempts per 15 minutes per IP.
-const loginLimiter = new SlidingWindowLimiter(10, 15 * 60 * 1000);
+function clientIp(req: Request): string {
+  return req.ip ?? req.socket.remoteAddress ?? "unknown";
+}
 
+function provisionAnonymousSession(db: Database.Database, res: Response): { ownerId: string; sessionId: string } {
+  const ownerId = createAnonymousOwner(db);
+  const session = createSession(db, ownerId);
+  setCookie(res, SESSION_COOKIE, sign(session.id), {
+    httpOnly: true,
+    maxAgeMs: SESSION_TTL_MS,
+  });
+  setCookie(res, CSRF_COOKIE, newCsrfToken(), {
+    httpOnly: false, // the client script must read this to send it back as a header
+    maxAgeMs: SESSION_TTL_MS,
+  });
+  return { ownerId, sessionId: session.id };
+}
+
+/**
+ * No login step: every visitor gets an isolated, anonymous workspace. A
+ * valid existing session cookie is reused; otherwise one is silently
+ * provisioned right here, on the very first request. requireAuth below is
+ * kept as a defensive check, not a real gate — attachSession should always
+ * leave req.auth set except when a new-workspace rate limit is hit.
+ */
 export function attachSession(db: Database.Database) {
-  return (req: Request, _res: Response, next: NextFunction): void => {
+  // Scoped to this attachSession call (i.e. one per createApp() instance —
+  // the same pattern every other limiter in server.ts already follows), not
+  // module-level: a module-level singleton would leak state across every app
+  // instance sharing this process, including every test file in one `node
+  // --test` run.
+  //
+  // Defence in depth against identity-cycling to dodge the per-visitor spend
+  // cap (clearing cookies and re-requesting to get a fresh owner): caps how
+  // many brand-new anonymous workspaces one IP can provision per hour. The
+  // global daily spend cap (see config.GLOBAL_DAILY_SPEND_USD) is the real
+  // backstop regardless of how many identities one visitor cycles through.
+  const newWorkspaceLimiter = new SlidingWindowLimiter(20, 60 * 60 * 1000);
+
+  return (req: Request, res: Response, next: NextFunction): void => {
     const raw = req.cookies?.[SESSION_COOKIE];
     if (raw) {
       const sessionId = verifySigned(raw);
@@ -36,56 +70,33 @@ export function attachSession(db: Database.Database) {
         const row = getValidSession(db, sessionId);
         if (row) {
           req.auth = { ownerId: row.owner_id, sessionId: row.id };
+          next();
+          return;
         }
       }
     }
+
+    if (!newWorkspaceLimiter.check(clientIp(req))) {
+      res.status(429).json({
+        error: "too_many_new_workspaces",
+        message: "Too many new sessions from this address. Try again in a while.",
+      });
+      return;
+    }
+    req.auth = provisionAnonymousSession(db, res);
     next();
   };
 }
 
 export function requireAuth(req: Request, res: Response, next: NextFunction): void {
   if (!req.auth) {
-    res.status(401).json({ error: "unauthenticated", message: "Sign in with the access code first." });
+    res.status(401).json({ error: "unauthenticated", message: "Could not start a session." });
     return;
   }
   next();
 }
 
-function clientIp(req: Request): string {
-  return req.ip ?? req.socket.remoteAddress ?? "unknown";
-}
-
-export function loginHandler(db: Database.Database) {
-  return (req: Request, res: Response): void => {
-    const ip = clientIp(req);
-    if (!loginLimiter.check(ip)) {
-      res.status(429).json({
-        error: "too_many_attempts",
-        message: "Too many attempts. Try again later.",
-      });
-      return;
-    }
-
-    const code = typeof req.body?.code === "string" ? req.body.code : "";
-    if (!accessCodeMatches(code)) {
-      res.status(401).json({ error: "invalid_code", message: "Incorrect access code." });
-      return;
-    }
-
-    const ownerId = getOrCreateDefaultOwner(db);
-    const session = createSession(db, ownerId);
-    setCookie(res, SESSION_COOKIE, sign(session.id), {
-      httpOnly: true,
-      maxAgeMs: SESSION_TTL_MS,
-    });
-    setCookie(res, CSRF_COOKIE, newCsrfToken(), {
-      httpOnly: false, // the client script must read this to send it back as a header
-      maxAgeMs: SESSION_TTL_MS,
-    });
-    res.json({ ok: true, ownerId });
-  };
-}
-
+/** Abandons the current anonymous workspace. The next request provisions a brand-new one via attachSession — this is "start over", not a real sign-out. */
 export function logoutHandler(db: Database.Database) {
   return (req: Request, res: Response): void => {
     if (req.auth) {
