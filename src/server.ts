@@ -29,6 +29,8 @@ import { canAccessBrand, isOwner } from "./security/brand-access";
 import { renderSharePage } from "./share-page";
 import { buildBrandMarkdown } from "./snapshot";
 import { checkUploadAgainstBrand, UploadDecodeError } from "./review/upload-check";
+import { createLead } from "./leads";
+import { notifySlack } from "./slack";
 import type { ApprovedBrandContext } from "./llm";
 import type { BrandContext } from "./import/types";
 
@@ -251,6 +253,53 @@ export function createApp() {
       }
     }
   );
+
+  // Optional, post-delivery email capture. Never required to use any part
+  // of the free tool — see src/leads.ts and the free-journey UI, which only
+  // shows this after a run has actually delivered something.
+  const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+  const leadLimiterByOwner = new SlidingWindowLimiter(5, 60 * 60 * 1000);
+
+  app.post("/api/brands/:id/leads", requireAuth, requireCsrf, async (req, res) => {
+    const brand = getBrand(db, req.params.id);
+    if (!brand || brand.owner_id !== req.auth!.ownerId) {
+      res.status(404).json({ error: "not_found" });
+      return;
+    }
+    if (!leadLimiterByOwner.check(req.auth!.ownerId)) {
+      res.status(429).json({ error: "rate_limited", message: "Please try again later." });
+      return;
+    }
+
+    const email = typeof req.body?.email === "string" ? req.body.email.trim() : "";
+    const preferredTool = typeof req.body?.preferredTool === "string" ? req.body.preferredTool.trim().slice(0, 200) : null;
+    const notes = typeof req.body?.notes === "string" ? req.body.notes.trim().slice(0, 2000) : null;
+    const consent = req.body?.consent === true;
+
+    if (!EMAIL_RE.test(email)) {
+      res.status(400).json({ error: "invalid_body", message: "A valid email address is required." });
+      return;
+    }
+    if (!consent) {
+      res.status(400).json({ error: "consent_required", message: "Consent is required to save your details." });
+      return;
+    }
+
+    const lead = createLead(db, brand.id, { email, preferredTool, notes: notes || null, consent: true });
+    void notifySlack(
+      [
+        "New Brand OS free-tool lead",
+        `Brand: ${brand.source_url}`,
+        `Email: ${email}`,
+        preferredTool ? `Preferred tool: ${preferredTool}` : null,
+        notes ? `Notes: ${notes}` : null,
+      ]
+        .filter((l): l is string => l !== null)
+        .join("\n")
+    );
+
+    res.status(201).json({ ok: true, id: lead.id });
+  });
 
   app.patch("/api/brands/:id", requireAuth, requireCsrf, (req, res) => {
     const brand = getBrand(db, req.params.id);
