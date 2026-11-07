@@ -19,6 +19,10 @@ import {
 } from "./brands";
 import { enqueueJob, getJob, startWorker } from "./jobs";
 import { runImportJob } from "./import/run-import-job";
+import { runBriefJob } from "./jobs/run-brief-job";
+import { runGenerateJob } from "./jobs/run-generate-job";
+import { createRun, getRun } from "./runs";
+import { getOutput, listOutputsForRun, listReviewsForOutput } from "./outputs";
 
 export function createApp() {
   const db = openDb();
@@ -170,6 +174,143 @@ export function createApp() {
     res.json({ ok: true });
   });
 
+  // --- Runs (briefs -> generate -> review/repair) ---
+  const runLimiterByOwner = new SlidingWindowLimiter(3, 60 * 60 * 1000);
+  const runLimiterByIp = new SlidingWindowLimiter(3, 60 * 60 * 1000);
+
+  function dailyRunCount(): number {
+    const row = db
+      .prepare("SELECT count(*) as n FROM runs WHERE created_at > datetime('now', '-1 day')")
+      .get() as { n: number };
+    return row.n;
+  }
+
+  function ownerHasActiveRun(ownerId: string): boolean {
+    const row = db
+      .prepare(
+        `SELECT 1 FROM runs r JOIN brands b ON b.id = r.brand_id
+         WHERE b.owner_id = ? AND r.status NOT IN ('completed','partial','failed') LIMIT 1`
+      )
+      .get(ownerId);
+    return Boolean(row);
+  }
+
+  app.post("/api/brands/:id/runs", requireAuth, requireCsrf, (req, res) => {
+    const brand = getBrand(db, req.params.id);
+    if (!brand || brand.owner_id !== req.auth!.ownerId) {
+      res.status(404).json({ error: "not_found" });
+      return;
+    }
+    if (brand.status !== "ready" || !brand.approved_context_json) {
+      res.status(400).json({
+        error: "brand_not_ready",
+        message: "This brand's import must be complete and its context approved before starting a run.",
+      });
+      return;
+    }
+
+    const task = typeof req.body?.task === "string" ? req.body.task.trim() : "";
+    if (!task) {
+      res.status(400).json({ error: "invalid_body", message: "task is required." });
+      return;
+    }
+    const preset = typeof req.body?.preset === "string" ? req.body.preset : null;
+
+    const ownerId = req.auth!.ownerId;
+    const ip = req.ip ?? "unknown";
+    if (!runLimiterByOwner.check(ownerId) || !runLimiterByIp.check(ip)) {
+      res.status(429).json({ error: "rate_limited", message: "Run limit reached: 3 per hour." });
+      return;
+    }
+    if (dailyRunCount() >= config.DAILY_RUN_LIMIT) {
+      res.status(429).json({ error: "rate_limited", message: "The daily run limit has been reached." });
+      return;
+    }
+    if (ownerHasActiveRun(ownerId)) {
+      res.status(409).json({
+        error: "run_in_progress",
+        message: "Only one active run per owner is allowed — wait for the current run to finish.",
+      });
+      return;
+    }
+
+    const run = createRun(db, brand.id, task, preset, brand.approved_context_version);
+    const job = enqueueJob(db, { runId: run.id, phase: "brief" });
+    res.status(202).json({ run, jobId: job.id });
+  });
+
+  function loadRunWithOwnerCheck(runId: string, ownerId: string) {
+    const run = getRun(db, runId);
+    if (!run) return null;
+    const brand = getBrand(db, run.brand_id);
+    if (!brand || brand.owner_id !== ownerId) return null;
+    return { run, brand };
+  }
+
+  app.get("/api/runs/:id", requireAuth, (req, res) => {
+    const found = loadRunWithOwnerCheck(req.params.id, req.auth!.ownerId);
+    if (!found) {
+      res.status(404).json({ error: "not_found" });
+      return;
+    }
+    const { run } = found;
+    const outputs = listOutputsForRun(db, run.id).map((o) => ({
+      id: o.id,
+      type: o.type,
+      status: o.status,
+      version: o.version,
+      brief: o.template_inputs_json ? JSON.parse(o.template_inputs_json) : null,
+      reviews: listReviewsForOutput(db, o.id).map((r) => ({
+        id: r.id,
+        outputVersion: r.output_version,
+        findings: JSON.parse(r.findings_json),
+        fixes: r.fixes_json ? JSON.parse(r.fixes_json) : [],
+        createdAt: r.created_at,
+      })),
+    }));
+
+    res.json({
+      id: run.id,
+      brandId: run.brand_id,
+      task: run.task,
+      preset: run.preset,
+      status: run.status,
+      model: run.model,
+      promptTokens: run.prompt_tokens,
+      completionTokens: run.completion_tokens,
+      elapsedMs: run.elapsed_ms,
+      unknowns: run.unknowns_json ? JSON.parse(run.unknowns_json) : [],
+      createdAt: run.created_at,
+      outputs,
+    });
+  });
+
+  app.get("/api/outputs/:id/file", requireAuth, (req, res) => {
+    const output = getOutput(db, req.params.id);
+    if (!output || !output.file_id) {
+      res.status(404).json({ error: "not_found" });
+      return;
+    }
+    const run = getRun(db, output.run_id);
+    const brand = run ? getBrand(db, run.brand_id) : undefined;
+    if (!run || !brand || brand.owner_id !== req.auth!.ownerId) {
+      res.status(404).json({ error: "not_found" });
+      return;
+    }
+    if (!fs.existsSync(output.file_id)) {
+      res.status(404).json({ error: "not_found", message: "Output record exists but the file is missing on disk." });
+      return;
+    }
+    const ext = path.extname(output.file_id).toLowerCase();
+    const mime = ext === ".pdf" ? "application/pdf" : ext === ".png" ? "image/png" : "application/octet-stream";
+    res.set("Content-Type", mime);
+    if (req.method === "HEAD") {
+      res.end();
+      return;
+    }
+    fs.createReadStream(output.file_id).pipe(res);
+  });
+
   app.get("/api/jobs/:id", requireAuth, (req, res) => {
     const job = getJob(db, req.params.id);
     if (!job) {
@@ -179,6 +320,15 @@ export function createApp() {
     if (job.brand_id) {
       const brand = getBrand(db, job.brand_id);
       if (!brand || brand.owner_id !== req.auth!.ownerId) {
+        res.status(404).json({ error: "not_found" });
+        return;
+      }
+    } else if (job.run_id) {
+      // Brief/generate jobs carry run_id instead of brand_id — ownership
+      // traces through the run's brand. Without this branch any
+      // authenticated user could poll any other owner's run jobs.
+      const found = loadRunWithOwnerCheck(job.run_id, req.auth!.ownerId);
+      if (!found) {
         res.status(404).json({ error: "not_found" });
         return;
       }
@@ -212,7 +362,7 @@ export function createApp() {
 if (require.main === module) {
   fs.mkdirSync(config.ASSET_DIR, { recursive: true });
   const { app, db } = createApp();
-  const worker = startWorker(db, { import: runImportJob });
+  const worker = startWorker(db, { import: runImportJob, brief: runBriefJob, generate: runGenerateJob });
 
   const server = app.listen(config.PORT, () => {
     // eslint-disable-next-line no-console

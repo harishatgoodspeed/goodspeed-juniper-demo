@@ -1,5 +1,5 @@
 import type Database from "better-sqlite3";
-import type { JobRow } from "../jobs";
+import { enqueueJob, type JobRow } from "../jobs";
 import { getBrand } from "../brands";
 import { getRun, setRunBriefs, setRunStatus } from "../runs";
 import { generateBriefs as realGenerateBriefs, type ApprovedBrandContext } from "../llm";
@@ -8,10 +8,13 @@ import type { BrandContext } from "../import/types";
 export interface RunBriefJobDeps {
   /** Injectable for tests, so this handler never needs a real ANTHROPIC_API_KEY to be exercised offline. */
   generateBriefs?: typeof realGenerateBriefs;
+  /** Injectable for tests, so a successful brief job doesn't also need the generate job's dependencies. */
+  enqueueNext?: typeof enqueueJob;
 }
 
 export async function runBriefJob(db: Database.Database, job: JobRow, deps: RunBriefJobDeps = {}): Promise<void> {
   const generateBriefs = deps.generateBriefs ?? realGenerateBriefs;
+  const enqueueNext = deps.enqueueNext ?? enqueueJob;
   if (!job.run_id) throw new Error("Brief job has no run_id");
   const run = getRun(db, job.run_id);
   if (!run) throw new Error(`Run ${job.run_id} not found`);
@@ -37,6 +40,8 @@ export async function runBriefJob(db: Database.Database, job: JobRow, deps: RunB
       completionTokens: briefSet.completionTokens,
       elapsedMs: briefSet.elapsedMs,
     });
+
+    enqueueNext(db, { runId: run.id, phase: "generate" });
   } catch (err) {
     setRunStatus(db, run.id, "failed");
     throw err;

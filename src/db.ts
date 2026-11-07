@@ -11,6 +11,20 @@ function migrationsDir(): string {
 }
 
 export function openDb(databasePath = config.DATABASE_PATH): Database.Database {
+  // ":memory:" is used exclusively by .env.test (DATABASE_PATH=:memory:).
+  // Caching it as the module-level singleton would mean every createApp()
+  // call across every test in a file shares one database — a real bug that
+  // surfaced as leftover 'queued' runs from one test tripping the "one
+  // active run per owner" check in a later, unrelated test. A real file path
+  // still benefits from the singleton (don't reopen the same file
+  // repeatedly), but ":memory:" must always be a fresh, independent database.
+  if (databasePath === ":memory:") {
+    const db = new Database(databasePath);
+    db.pragma("foreign_keys = ON");
+    runMigrations(db);
+    return db;
+  }
+
   if (instance) return instance;
 
   const dir = path.dirname(databasePath);
