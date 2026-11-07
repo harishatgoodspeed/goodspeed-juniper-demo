@@ -59,8 +59,8 @@ function validBrief(outputType: string, overrides: Record<string, unknown> = {})
 function mockClient(briefs: unknown[], usage = { input_tokens: 123, output_tokens: 456 }): AnthropicMessagesClient {
   return {
     messages: {
-      create: async () => ({
-        content: [{ type: "tool_use", input: { briefs } }],
+      parse: async () => ({
+        parsed_output: { briefs },
         usage,
       }),
     },
@@ -173,10 +173,10 @@ test("rejects a post_copy brief missing postCopyText", async () => {
   await assert.rejects(() => generateBriefs(baseInput(), { client }), BriefValidationError);
 });
 
-test("rejects a model response with no tool_use block", async () => {
+test("rejects a model response with no parsed structured output", async () => {
   const client: AnthropicMessagesClient = {
     messages: {
-      create: async () => ({ content: [{ type: "text" }], usage: { input_tokens: 1, output_tokens: 1 } }),
+      parse: async () => ({ parsed_output: null, usage: { input_tokens: 1, output_tokens: 1 } }),
     },
   };
   await assert.rejects(() => generateBriefs(baseInput(), { client }), BriefValidationError);

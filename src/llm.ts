@@ -1,4 +1,5 @@
 import Anthropic from "@anthropic-ai/sdk";
+import { zodOutputFormat } from "@anthropic-ai/sdk/helpers/zod";
 import { z } from "zod";
 import { config } from "./config";
 import type { BrandContext } from "./import/types";
@@ -26,8 +27,8 @@ export interface GenerateBriefsInput {
 
 export interface AnthropicMessagesClient {
   messages: {
-    create: (params: unknown) => Promise<{
-      content: Array<{ type: string; input?: unknown }>;
+    parse: (params: unknown) => Promise<{
+      parsed_output: unknown;
       usage?: { input_tokens?: number; output_tokens?: number };
     }>;
   };
@@ -77,55 +78,6 @@ const BriefsToolInput = z.object({
   briefs: z.array(BriefShape).length(4),
 });
 
-const TOOL_NAME = "submit_briefs";
-
-function toolDefinition() {
-  const briefProperties = {
-    outputType: { type: "string", enum: OUTPUT_TYPES },
-    purpose: { type: "string" },
-    audience: { type: "string" },
-    sourcedFactualCopy: { type: "array", items: { type: "string" } },
-    layoutDirection: { type: "string" },
-    paletteTokenHexes: { type: "array", items: { type: "string" } },
-    fontFamilies: { type: "array", items: { type: "string" } },
-    logoAssetId: { type: ["string", "null"] },
-    imageAssetIds: { type: "array", items: { type: "string" } },
-    voiceGuidance: { type: "string" },
-    unknowns: { type: "array", items: { type: "string" } },
-    postCopyText: { type: "string" },
-  };
-  const required = [
-    "outputType",
-    "purpose",
-    "audience",
-    "sourcedFactualCopy",
-    "layoutDirection",
-    "paletteTokenHexes",
-    "fontFamilies",
-    "logoAssetId",
-    "imageAssetIds",
-    "voiceGuidance",
-    "unknowns",
-  ];
-
-  return {
-    name: TOOL_NAME,
-    description: "Submit exactly 4 coordinated briefs, one per required output type.",
-    input_schema: {
-      type: "object",
-      properties: {
-        briefs: {
-          type: "array",
-          minItems: 4,
-          maxItems: 4,
-          items: { type: "object", properties: briefProperties, required },
-        },
-      },
-      required: ["briefs"],
-    },
-  };
-}
-
 function systemPrompt(): string {
   return [
     "You are drafting creative briefs for a brand's marketing assets.",
@@ -139,8 +91,6 @@ function systemPrompt(): string {
     "- sourcedFactualCopy and postCopyText (for the post_copy brief only) must contain only facts that are explicitly present in the brand description or page excerpt you are given. If a commercial fact (a price, a date, a metric, a partner name, a quote) is not explicitly given to you, do not invent a plausible-sounding one — put a note about the missing fact in that brief's unknowns array instead.",
     "- Never invent testimonials, review scores, or results.",
     "- Voice: write without exclamation points, matching any voice guidance you are given.",
-    "",
-    "Call the submit_briefs tool with your 4 briefs. Do not respond with plain text.",
   ].join("\n");
 }
 
@@ -203,22 +153,23 @@ export async function generateBriefs(
   const client = deps.client ?? requireRealClient();
 
   const start = process.hrtime.bigint();
-  const response = await client.messages.create({
+  const response = await client.messages.parse({
     model: config.ANTHROPIC_MODEL,
     max_tokens: config.MAX_RUN_TOKENS,
     system: systemPrompt(),
     messages: [{ role: "user", content: userPrompt(input) }],
-    tools: [toolDefinition()],
-    tool_choice: { type: "tool", name: TOOL_NAME },
+    output_config: { format: zodOutputFormat(BriefsToolInput) },
   });
   const elapsedMs = Number((process.hrtime.bigint() - start) / 1_000_000n);
 
-  const toolUse = response.content.find((block) => block.type === "tool_use");
-  if (!toolUse) {
-    throw new BriefValidationError("Model response did not include a tool_use block");
+  if (!response.parsed_output) {
+    throw new BriefValidationError("Model response did not include parsed structured output");
   }
 
-  const parsed = BriefsToolInput.safeParse(toolUse.input);
+  // The SDK's own output_config.format validation runs against the real API only —
+  // re-validate here too so a mocked/misbehaving client can't skip it (same
+  // "never trust the model's own claims" rule validateReferences enforces below).
+  const parsed = BriefsToolInput.safeParse(response.parsed_output);
   if (!parsed.success) {
     throw new BriefValidationError(`Model output failed schema validation: ${parsed.error.message}`);
   }
