@@ -21,8 +21,17 @@ import { enqueueJob, getJob, startWorker } from "./jobs";
 import { runImportJob } from "./import/run-import-job";
 import { runBriefJob } from "./jobs/run-brief-job";
 import { runGenerateJob } from "./jobs/run-generate-job";
-import { createRun, getRun } from "./runs";
+import { createRun, getLatestRunForBrand, getRun } from "./runs";
 import { getOutput, listOutputsForRun, listReviewsForOutput } from "./outputs";
+import { createShare, getShare, listActiveSharesForBrand, revokeShare } from "./shares";
+import { canAccessBrand, isOwner } from "./security/brand-access";
+import { renderSharePage } from "./share-page";
+
+function notFoundPage(): string {
+  return `<!doctype html><html lang="en-GB"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="robots" content="noindex, nofollow"><title>Page not found</title>
+  <style>body{font-family:ui-sans-serif,system-ui,sans-serif;background:#F9F2ED;color:#242F28;display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0;padding:20px;text-align:center}</style>
+  </head><body><div><h1>Page not found</h1><p>This page does not exist, or you do not have a link that can open it.</p></div></body></html>`;
+}
 
 export function createApp() {
   const db = openDb();
@@ -114,14 +123,17 @@ export function createApp() {
     });
   });
 
-  app.get("/api/assets/:id", requireAuth, (req, res) => {
+  app.get("/api/assets/:id", (req, res) => {
     const asset = getSourceAsset(db, req.params.id);
     if (!asset || !asset.local_path) {
       res.status(404).json({ error: "not_found" });
       return;
     }
     const brand = getBrand(db, asset.brand_id);
-    if (!brand || brand.owner_id !== req.auth!.ownerId) {
+    // Accessible to the owning session, or to anyone holding a valid share
+    // token for this brand (see /b/:id) — never to any other authenticated
+    // user just because they're logged in.
+    if (!brand || !canAccessBrand(req, db, brand)) {
       res.status(404).json({ error: "not_found" });
       return;
     }
@@ -172,6 +184,93 @@ export function createApp() {
     }
     db.prepare("DELETE FROM brands WHERE id = ?").run(brand.id); // cascades via FK
     res.json({ ok: true });
+  });
+
+  // --- Sharing ---
+  // A brand's results are private by default (see canAccessBrand / GET /b/:id).
+  // This section is how an owner opts in, and how they revoke that opt-in.
+  app.post("/api/brands/:id/share", requireAuth, requireCsrf, (req, res) => {
+    const brand = getBrand(db, req.params.id);
+    if (!brand || brand.owner_id !== req.auth!.ownerId) {
+      res.status(404).json({ error: "not_found" });
+      return;
+    }
+    const { share, token } = createShare(db, brand.id);
+    res.status(201).json({
+      id: share.id,
+      token,
+      url: `${config.APP_BASE_URL}/b/${brand.id}?token=${token}`,
+      createdAt: share.created_at,
+      warning:
+        "Anyone with this link can view this page and download its outputs. It is shown once here and cannot be retrieved again — revoke it if it leaks.",
+    });
+  });
+
+  app.get("/api/brands/:id/shares", requireAuth, (req, res) => {
+    const brand = getBrand(db, req.params.id);
+    if (!brand || brand.owner_id !== req.auth!.ownerId) {
+      res.status(404).json({ error: "not_found" });
+      return;
+    }
+    const shares = listActiveSharesForBrand(db, brand.id).map((s) => ({
+      id: s.id,
+      createdAt: s.created_at,
+      expiresAt: s.expires_at,
+      // token/token_hash are never returned once creation has responded.
+    }));
+    res.json({ shares });
+  });
+
+  app.delete("/api/brands/:id/share/:shareId", requireAuth, requireCsrf, (req, res) => {
+    const brand = getBrand(db, req.params.id);
+    if (!brand || brand.owner_id !== req.auth!.ownerId) {
+      res.status(404).json({ error: "not_found" });
+      return;
+    }
+    const share = getShare(db, req.params.shareId);
+    if (!share || share.brand_id !== brand.id) {
+      res.status(404).json({ error: "not_found" });
+      return;
+    }
+    revokeShare(db, share.id);
+    res.json({ ok: true });
+  });
+
+  // --- Shareable result page ---
+  // Deliberately NOT behind requireAuth: canAccessBrand allows either the
+  // owner's session or a valid share token, and a visitor with neither gets
+  // the same 404 a nonexistent brand would — existence is never confirmed to
+  // someone without access.
+  app.get("/b/:id", (req, res) => {
+    const brand = getBrand(db, req.params.id);
+    if (!brand || !canAccessBrand(req, db, brand)) {
+      res.status(404).set("Content-Type", "text/html; charset=utf-8").send(notFoundPage());
+      return;
+    }
+
+    const owner = isOwner(req, brand);
+    const viewToken = owner ? null : typeof req.query.token === "string" ? req.query.token : null;
+
+    const run = getLatestRunForBrand(db, brand.id) ?? null;
+    const outputs = run
+      ? listOutputsForRun(db, run.id).map((output) => ({ output, reviews: listReviewsForOutput(db, output.id) }))
+      : [];
+
+    const approved: { logoAssetId: string | null } | null = brand.approved_context_json
+      ? JSON.parse(brand.approved_context_json)
+      : null;
+
+    res.set("Content-Type", "text/html; charset=utf-8");
+    res.set("X-Robots-Tag", "noindex, nofollow");
+    res.send(
+      renderSharePage({
+        brand,
+        logoAssetId: approved?.logoAssetId ?? null,
+        run,
+        outputs,
+        viewToken,
+      })
+    );
   });
 
   // --- Runs (briefs -> generate -> review/repair) ---
@@ -285,7 +384,7 @@ export function createApp() {
     });
   });
 
-  app.get("/api/outputs/:id/file", requireAuth, (req, res) => {
+  app.get("/api/outputs/:id/file", (req, res) => {
     const output = getOutput(db, req.params.id);
     if (!output || !output.file_id) {
       res.status(404).json({ error: "not_found" });
@@ -293,7 +392,7 @@ export function createApp() {
     }
     const run = getRun(db, output.run_id);
     const brand = run ? getBrand(db, run.brand_id) : undefined;
-    if (!run || !brand || brand.owner_id !== req.auth!.ownerId) {
+    if (!run || !brand || !canAccessBrand(req, db, brand)) {
       res.status(404).json({ error: "not_found" });
       return;
     }

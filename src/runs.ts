@@ -35,6 +35,12 @@ export function getRun(db: Database.Database, id: string): RunRow | undefined {
   return db.prepare("SELECT * FROM runs WHERE id = ?").get(id) as RunRow | undefined;
 }
 
+export function getLatestRunForBrand(db: Database.Database, brandId: string): RunRow | undefined {
+  return db
+    .prepare("SELECT * FROM runs WHERE brand_id = ? ORDER BY created_at DESC LIMIT 1")
+    .get(brandId) as RunRow | undefined;
+}
+
 export function setRunStatus(db: Database.Database, id: string, status: RunRow["status"]): void {
   db.prepare("UPDATE runs SET status = ? WHERE id = ?").run(status, id);
 }

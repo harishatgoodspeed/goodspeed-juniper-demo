@@ -205,7 +205,7 @@ export async function generateBriefs(
   const start = process.hrtime.bigint();
   const response = await client.messages.create({
     model: config.ANTHROPIC_MODEL,
-    max_tokens: 4096,
+    max_tokens: config.MAX_RUN_TOKENS,
     system: systemPrompt(),
     messages: [{ role: "user", content: userPrompt(input) }],
     tools: [toolDefinition()],

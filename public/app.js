@@ -163,6 +163,9 @@
     const data = await api(`/api/brands/${brandId}`);
     renderResult(data);
     show(views.result);
+    document.getElementById("runResult").innerHTML = "";
+    document.getElementById("shareReveal").hidden = true;
+    await loadShares(brandId);
   }
 
   document.getElementById("backBtn").addEventListener("click", async () => {
@@ -338,6 +341,113 @@
       approveStatus.textContent = "Saved.";
     } catch (err) {
       approveStatus.textContent = `Could not save: ${err.message}`;
+    }
+  });
+
+  // --- Runs ---
+  const runForm = document.getElementById("runForm");
+  const runError = document.getElementById("runError");
+  const runStatus = document.getElementById("runStatus");
+  const runStatusText = document.getElementById("runStatusText");
+
+  runForm.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    runError.hidden = true;
+    const task = document.getElementById("runTask").value.trim();
+    const submitBtn = runForm.querySelector("button[type=submit]");
+    submitBtn.disabled = true;
+    try {
+      const { run, jobId } = await api(`/api/brands/${currentBrandId}/runs`, {
+        method: "POST",
+        body: JSON.stringify({ task }),
+      });
+      runStatus.hidden = false;
+      runStatusText.textContent = "Queued.";
+      await pollRunJob(jobId);
+      await renderRunResult(run.id);
+    } catch (err) {
+      runError.textContent = err.message;
+      runError.hidden = false;
+    } finally {
+      submitBtn.disabled = false;
+    }
+  });
+
+  function pollRunJob(jobId) {
+    return new Promise((resolve, reject) => {
+      const tick = async () => {
+        try {
+          const job = await api(`/api/jobs/${jobId}`);
+          runStatusText.textContent = `Job ${job.phase}: ${job.status}${job.last_error ? ` (${job.last_error})` : ""}`;
+          if (job.status === "succeeded") {
+            resolve(job);
+          } else if (job.status === "failed" || job.status === "cancelled") {
+            // The run's own status/last error is the useful signal here —
+            // a failed brief job still means a real, inspectable run record.
+            resolve(job);
+          } else {
+            setTimeout(tick, 1200);
+          }
+        } catch (err) {
+          reject(err);
+        }
+      };
+      tick();
+    });
+  }
+
+  async function renderRunResult(runId) {
+    const run = await api(`/api/runs/${runId}`);
+    const container = document.getElementById("runResult");
+    container.innerHTML = "";
+    container.appendChild(el("p", { textContent: `Run status: ${run.status}` }));
+    if (run.outputs.length === 0) {
+      container.appendChild(el("p", { className: "hint", textContent: "No outputs yet." }));
+      return;
+    }
+    run.outputs.forEach((o) => {
+      const row = el("div", { className: "brand-row" });
+      row.appendChild(el("span", { textContent: `${o.type}: ${o.status}` }));
+      if (o.status === "ready") {
+        row.appendChild(el("a", { href: `/api/outputs/${o.id}/file`, target: "_blank", rel: "noopener", textContent: "open" }));
+      }
+      container.appendChild(row);
+    });
+  }
+
+  // --- Sharing ---
+  async function loadShares(brandId) {
+    const { shares } = await api(`/api/brands/${brandId}/shares`);
+    const list = document.getElementById("shareList");
+    list.innerHTML = "";
+    shares.forEach((s) => {
+      const li = el("li");
+      li.appendChild(el("span", { textContent: `Link created ${new Date(s.createdAt).toLocaleString("en-GB")}` }));
+      const revokeBtn = el("button", { className: "btn btn-ghost", textContent: "Revoke" });
+      revokeBtn.addEventListener("click", async () => {
+        await api(`/api/brands/${brandId}/share/${s.id}`, { method: "DELETE" });
+        await loadShares(brandId);
+      });
+      li.appendChild(revokeBtn);
+      list.appendChild(li);
+    });
+  }
+
+  document.getElementById("enableShareBtn").addEventListener("click", async () => {
+    const reveal = document.getElementById("shareReveal");
+    try {
+      const share = await api(`/api/brands/${currentBrandId}/share`, { method: "POST" });
+      reveal.hidden = false;
+      reveal.innerHTML = "";
+      reveal.appendChild(el("p", { textContent: "Share link (shown once, save it now)." }));
+      const link = el("a", { href: share.url, target: "_blank", rel: "noopener", textContent: share.url });
+      link.style.wordBreak = "break-all";
+      reveal.appendChild(link);
+      reveal.appendChild(el("p", { className: "hint", textContent: share.warning }));
+      await loadShares(currentBrandId);
+    } catch (err) {
+      reveal.hidden = false;
+      reveal.textContent = `Could not enable sharing: ${err.message}`;
     }
   });
 

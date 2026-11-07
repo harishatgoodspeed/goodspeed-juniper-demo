@@ -2,14 +2,15 @@
 
 Imports a real website's brand, drafts task briefs against it, renders real
 downloadable assets, reviews them against the brand (with a bounded
-auto-repair loop), and (eventually) publishes a shareable result page.
+auto-repair loop), and publishes a shareable, access-controlled result page.
 
-**Status: Phases 1–4 built and tested; Phase 5 (sharing, Docker, deeper rate
-limiting) is not.** The whole pipeline — import a real site → approve its
+**Status: Phases 1–5 built and tested; Docker and deeper multi-instance rate
+limiting are not.** The whole pipeline — import a real site → approve its
 brand → draft briefs → render real PNG/PDF assets → review with real
-CIEDE2000 colour checks and repair on failure — runs end to end. What's
-missing is documented plainly below, not glossed over. **Nothing in this repo
-has been deployed.**
+CIEDE2000 colour checks and repair on failure → publish a private-by-default
+result page the owner can share via a revocable link — runs end to end.
+What's missing is documented plainly below, not glossed over. **Nothing in
+this repo has been deployed.**
 
 ## Setup
 
@@ -40,13 +41,15 @@ as far as it honestly can and then fails clearly on the brief step (see
 npm test
 ```
 
-82 tests, entirely offline, running under `node --env-file=.env.test`:
+98 tests, entirely offline, running under `node --env-file=.env.test`:
 SSRF checks spin up real local HTTP servers to prove loopback/metadata
 addresses are refused; Phase 3's tests launch a real headless Chromium and
 assert on real PNG/PDF bytes; Phase 4's deterministic wrong-palette-token
-fixture computes a real CIEDE2000 ΔE. The one thing not exercised by `npm
-test` is a real Anthropic API call (no key in this environment) and a real
-network import (exercised manually — see below).
+fixture computes a real CIEDE2000 ΔE; Phase 5's tests prove anonymous access
+actually works for a valid share token and actually fails for a wrong one, a
+revoked one, or no token at all. The one thing not exercised by `npm test` is
+a real Anthropic API call (no key in this environment) and a real network
+import (exercised manually — see below).
 
 ## The pipeline
 
@@ -67,6 +70,13 @@ POST /api/brands/:id/runs {task}
 
 GET /api/runs/:id          → run + every output + every review's findings
 GET /api/outputs/:id/file  → the rendered PNG/PDF, ownership-checked
+
+POST /api/brands/:id/share           → owner enables sharing; the raw token
+                                        is returned once and never again
+GET  /api/brands/:id/shares          → owner lists active share links
+DELETE /api/brands/:id/share/:shareId → owner revokes one, effective immediately
+GET /b/:id[?token=...]               → the result page: owner session or a
+                                        valid share token, nothing else
 ```
 
 ### Verified end to end (manually, not part of `npm test`)
@@ -136,21 +146,42 @@ client, since no key exists in this environment).
 - **Static serving**: the app's own frontend is served through a small
   from-scratch static file handler with correct MIME types, GET/HEAD, path-
   traversal protection, and a plain 404 for anything missing.
+- **Sharing & the result page (Phase 5)**: `GET /b/:id` is a server-rendered
+  page (the original task prompt, the approved brand, the briefs, every
+  output with its preview/download, and its full review findings table),
+  private by default — it checks the owner's session or a valid share token
+  and 404s identically for "wrong token" and "brand doesn't exist" (existence
+  is never confirmed to someone without access). `POST /api/brands/:id/share`
+  creates a high-entropy (256-bit) capability token; only its SHA-256 hash is
+  ever stored, so the raw token is shown exactly once, the same way an API
+  key would be. `DELETE /api/brands/:id/share/:shareId` revokes it
+  immediately. Asset and output downloads (`/api/assets/:id`,
+  `/api/outputs/:id/file`) accept the same token for anonymous viewers.
+  `X-Robots-Tag: noindex, nofollow` is set on the page. Mobile-responsive,
+  keyboard-operable (native `<details>`/`<summary>` disclosures, no custom
+  JS dialogs to manage focus for), alt text on the logo image,
+  `prefers-reduced-motion` respected (the page uses essentially no motion),
+  British English and sentence case throughout.
+- **`MAX_RUN_TOKENS`** is now passed to the Anthropic call as `max_tokens`,
+  making it a real cap rather than a parsed-but-unused value.
 
-## What's NOT built yet (Phase 5)
+## What's NOT built yet
 
-- **The shareable result page** (`/b/:id`), capability-token sharing and
-  revocation.
-- **Deletion** exists for brands (`DELETE /api/brands/:id`); there's no
-  retention-cleanup job yet (`RETENTION_DAYS` is parsed, not enforced).
-- **`MAX_RUN_TOKENS`** is parsed and validated but not yet passed to the
-  Anthropic call as a hard cap (the brief call uses a fixed `max_tokens:
-  4096`).
+- **Deletion** exists for brands (`DELETE /api/brands/:id`, which also
+  cascades to its shares); there's no retention-cleanup job yet
+  (`RETENTION_DAYS` is parsed, not enforced).
 - **Docker** — this dev machine has no local Docker to build/test an image
   against, so none was written speculatively.
+- **Share expiry** — `shares.expires_at` exists in the schema and
+  `isValidShareToken` already honours it, but nothing in the API sets an
+  expiry yet; a share is revocable but doesn't currently expire on its own.
 - **The wider security test suite** the full spec calls for (redirect/
-  subresource SSRF is covered; broader fuzzing, a CI pipeline with mocked
-  paid APIs, etc. is not).
+  subresource SSRF, ownership/IDOR, and share access control are all covered;
+  broader fuzzing, a CI pipeline with mocked paid APIs, etc. is not).
+- **Rate limiting still doesn't coordinate across multiple instances** (see
+  "Known limitations" — unchanged by Phase 5, since share creation/revocation
+  are owner actions, not currently rate-limited at all beyond requiring a
+  valid session and CSRF token).
 
 ## Known limitations (disclosed, not hidden)
 
@@ -197,6 +228,16 @@ client, since no key exists in this environment).
   exposure.
 - **Named CSS colours aren't counted** (e.g. `tomato`) — only hex and
   `rgb()`/`rgba()`.
+- **A real bug caught by manual browser testing, not `npm test`**:
+  `share-page.ts` initially built the logo `<img src>` as
+  `/api/assets/:id/file`, copying the outputs route's `/file` suffix onto the
+  assets route, which doesn't have one (`GET /api/assets/:id`). Automated
+  tests had covered token-gated access to both routes directly, but nothing
+  rendered the actual page HTML and then fetched the URL it produced — so a
+  broken image on the real page went unnoticed until a live check in a
+  browser. Fixed, and a regression test (`tests/share-page-api.test.ts`,
+  "the rendered /b/:id page's logo <img src> actually resolves") now fetches
+  the real `<img src>` the page renders, not just the route in isolation.
 
 ## Environment variables
 
@@ -213,17 +254,19 @@ src/
   config.ts, pipeline-types.ts   env parsing; shared Brief/RenderEvidence/
                                   ReviewResult contracts between phases 2-4
   db.ts, migrate.ts               SQLite connection + migration runner
-  ids.ts, brands.ts, runs.ts, outputs.ts   DB repositories
+  ids.ts, brands.ts, runs.ts, outputs.ts, shares.ts   DB repositories
   jobs.ts                         persistent job queue + bounded worker
   llm.ts                          Anthropic brief generation + reference validation
+  share-page.ts                   server-rendered /b/:id HTML
   static-files.ts                 from-scratch static file serving
-  security/        url.ts (SSRF), session.ts, auth-middleware.ts, cookies.ts, csrf.ts, rate-limit.ts
+  security/        url.ts (SSRF), session.ts, auth-middleware.ts, cookies.ts, csrf.ts, rate-limit.ts, brand-access.ts (owner-or-share-token check)
   import/           fetch.ts, robots.ts, extract.ts, assets.ts, svg-sanitize.ts, run-import-job.ts
   generate/          templates.ts, render.ts  (Playwright rendering)
   review/            colour.ts (CIEDE2000), review.ts, repair.ts
   jobs/              run-brief-job.ts, run-generate-job.ts
   server.ts          Express app + routes
 migrations/0001_init.sql   full schema
-public/                     the app's own frontend (vanilla HTML/CSS/JS, Phase 1 import/approve UI only — no run/review UI yet)
-tests/                      82 node:test tests (see "Tests" above)
+public/                     the app's own frontend: sign in, import/approve,
+                             start a run, enable/revoke sharing (vanilla HTML/CSS/JS)
+tests/                      98 node:test tests (see "Tests" above)
 ```

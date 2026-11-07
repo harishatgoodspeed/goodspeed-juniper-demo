@@ -9,7 +9,7 @@
 <body>
   <header class="topbar">
     <span class="brand">Goodspeed Brand OS</span>
-    <span class="phase-tag">Phase 1 prototype: brand import only</span>
+    <span class="phase-tag">Private prototype</span>
     <button id="logoutBtn" class="btn btn-ghost" hidden>Sign out</button>
   </header>
 
@@ -73,6 +73,25 @@
         <button id="approveBtn" class="btn btn-primary">Save approved selection</button>
         <p id="approveStatus" aria-live="polite"></p>
       </div>
+
+      <h2>Start a run</h2>
+      <p class="hint">Needs an approved selection saved above first.</p>
+      <form id="runForm" class="stack">
+        <label for="runTask">What should this run produce</label>
+        <input id="runTask" name="task" type="text" placeholder="Launch announcement for the new collection" required>
+        <button type="submit" class="btn btn-primary">Start run</button>
+        <p id="runError" class="error" role="alert" hidden></p>
+      </form>
+      <div id="runStatus" class="status-card" hidden>
+        <p id="runStatusText" aria-live="polite"></p>
+      </div>
+      <div id="runResult"></div>
+
+      <h2>Sharing</h2>
+      <p class="hint">Results are private until you enable a link. Anyone with an enabled link can view the result page and download its outputs.</p>
+      <button id="enableShareBtn" class="btn btn-primary">Enable a share link</button>
+      <div id="shareReveal" class="status-card" hidden></div>
+      <ul id="shareList" class="file-list"></ul>
     </section>
   </main>
 
