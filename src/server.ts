@@ -1,12 +1,25 @@
 import path from "node:path";
 import fs from "node:fs";
 import express from "express";
-import { config, estimateUsdCost } from "./config";
+import { config } from "./config";
 import { openDb } from "./db";
 import { cookieMiddleware } from "./security/cookies";
 import { attachSession, logoutHandler, requireAuth } from "./security/auth-middleware";
 import { requireCsrf } from "./security/csrf";
-import { SlidingWindowLimiter } from "./security/rate-limit";
+import { PersistentSlidingWindowLimiter } from "./security/persistent-rate-limit";
+import { tryReserve, attachReservationToRun, releaseReservation, spendUsd } from "./spend";
+import { assertRasterWithinLimits, ImageLimitError } from "./image-limits";
+import { detectSiteLanguage } from "./language";
+import { detectEnglishVariant } from "./english-variant";
+import { listOwnedUploads } from "./imagery";
+import { listPostsForRun, listPostAssets, getPost, postLabel } from "./posts/store";
+import { editPostCopy, undoPost, changePostLayout, regenerateOnePost } from "./posts/mutate";
+import { buildPostZip, buildRunZip } from "./posts/package";
+import { rerenderPost } from "./jobs/run-posts-job";
+import { generatePostConcepts } from "./posts/concepts";
+import type { LedgerEntry } from "./ledger";
+import { newId } from "./ids";
+import { purgeExpiredBrands } from "./retention";
 import { serveStaticFile } from "./static-files";
 import { validateUrlSyntax } from "./security/url";
 import {
@@ -16,6 +29,7 @@ import {
   listSourceAssets,
   getSourceAsset,
   setApprovedContext,
+  setBrandContext,
 } from "./brands";
 import { enqueueJob, getJob, startWorker } from "./jobs";
 import { runImportJob } from "./import/run-import-job";
@@ -55,7 +69,17 @@ export function createApp() {
   // Before attachSession: a health check must never provision a workspace.
   app.get("/healthz", (_req, res) => res.json({ ok: true }));
 
-  app.use(express.json({ limit: "100kb" }));
+  // The tight parser used to wrap every route, including uploads. A later
+  // route parser cannot raise that limit: Express already rejected the body.
+  // Upload routes get a larger limit here. Everything else stays at 100kb.
+  const tightJson = express.json({ limit: "100kb" });
+  const uploadJson = express.json({ limit: "8mb" });
+  app.use((req, res, next) => {
+    if (req.method === "POST" && /\/(check-upload|owned-images)$/.test(req.path)) {
+      return uploadJson(req, res, next);
+    }
+    return tightJson(req, res, next);
+  });
   app.use(cookieMiddleware);
   app.use(attachSession(db));
 
@@ -69,8 +93,8 @@ export function createApp() {
   });
 
   // --- Brand import ---
-  const importLimiterByOwner = new SlidingWindowLimiter(5, 60 * 60 * 1000);
-  const importLimiterByIp = new SlidingWindowLimiter(5, 60 * 60 * 1000);
+  const importLimiterByOwner = new PersistentSlidingWindowLimiter(db, 5, 60 * 60 * 1000, "import-owner");
+  const importLimiterByIp = new PersistentSlidingWindowLimiter(db, 5, 60 * 60 * 1000, "import-ip");
 
   app.post("/api/brands", requireAuth, requireCsrf, (req, res) => {
     const rawUrl = typeof req.body?.url === "string" ? req.body.url.trim() : "";
@@ -119,17 +143,27 @@ export function createApp() {
       extraction_method: a.extraction_method,
       // local_path intentionally omitted: filesystem layout is not client-facing.
     }));
+    const parsedContext = brand.context_json ? JSON.parse(brand.context_json) : null;
+    const sampleText = `${parsedContext?.description ?? ""} ${parsedContext?.textExcerpt ?? ""}`;
+    const detected = detectEnglishVariant(sampleText);
     res.json({
       id: brand.id,
       sourceUrl: brand.source_url,
       status: brand.status,
       error: brand.error,
-      context: brand.context_json ? JSON.parse(brand.context_json) : null,
+      context: parsedContext,
+      englishSuggestion: detected === "us" ? "us" : "uk",
+      englishSuggestionSource: detected === "unknown" ? "default_british" : "site_spelling",
+      siteLanguage: detectSiteLanguage(sampleText),
       approvedContext: brand.approved_context_json ? JSON.parse(brand.approved_context_json) : null,
       approvedContextVersion: brand.approved_context_version,
       assets,
       createdAt: brand.created_at,
       updatedAt: brand.updated_at,
+      latestRun: (() => {
+        const latest = getLatestRunForBrand(db, brand.id);
+        return latest ? { id: latest.id, status: latest.status } : null;
+      })(),
     });
   });
 
@@ -192,13 +226,12 @@ export function createApp() {
   // keeps the tight 100kb default above.
   const UPLOAD_CHECK_MAX_BYTES = 5 * 1024 * 1024;
   const ALLOWED_UPLOAD_MIME = new Set(["image/png", "image/jpeg", "image/webp", "image/gif"]);
-  const uploadCheckLimiterByOwner = new SlidingWindowLimiter(10, 60 * 60 * 1000);
+  const uploadCheckLimiterByOwner = new PersistentSlidingWindowLimiter(db, 10, 60 * 60 * 1000, "upload-owner");
 
   app.post(
     "/api/brands/:id/check-upload",
     requireAuth,
     requireCsrf,
-    express.json({ limit: "8mb" }),
     async (req, res) => {
       const brand = getBrand(db, req.params.id);
       if (!brand || !canAccessBrand(req, db, brand)) {
@@ -227,6 +260,15 @@ export function createApp() {
           message: `Image must be non-empty and under ${UPLOAD_CHECK_MAX_BYTES} bytes.`,
         });
         return;
+      }
+      try {
+        assertRasterWithinLimits(buffer);
+      } catch (err) {
+        if (err instanceof ImageLimitError) {
+          res.status(400).json({ error: "image_too_large", message: err.message });
+          return;
+        }
+        throw err;
       }
 
       const approved = brand.approved_context_json
@@ -258,7 +300,7 @@ export function createApp() {
   // of the free tool — see src/leads.ts and the free-journey UI, which only
   // shows this after a run has actually delivered something.
   const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-  const leadLimiterByOwner = new SlidingWindowLimiter(5, 60 * 60 * 1000);
+  const leadLimiterByOwner = new PersistentSlidingWindowLimiter(db, 5, 60 * 60 * 1000, "lead-owner");
 
   app.post("/api/brands/:id/leads", requireAuth, requireCsrf, async (req, res) => {
     const brand = getBrand(db, req.params.id);
@@ -426,41 +468,14 @@ export function createApp() {
   });
 
   // --- Runs (briefs -> generate -> review/repair) ---
-  const runLimiterByOwner = new SlidingWindowLimiter(3, 60 * 60 * 1000);
-  const runLimiterByIp = new SlidingWindowLimiter(3, 60 * 60 * 1000);
+  const runLimiterByOwner = new PersistentSlidingWindowLimiter(db, 3, 60 * 60 * 1000, "run-owner");
+  const runLimiterByIp = new PersistentSlidingWindowLimiter(db, 3, 60 * 60 * 1000, "run-ip");
 
   function dailyRunCount(): number {
     const row = db
       .prepare("SELECT count(*) as n FROM runs WHERE created_at > datetime('now', '-1 day')")
       .get() as { n: number };
     return row.n;
-  }
-
-  /**
-   * Estimated USD spend (see config.estimateUsdCost — Sonnet 5.5 list pricing,
-   * not a billing reconciliation) over the last 24h. ownerId scopes it to one
-   * visitor's workspace for the per-visitor cap; omitted, it's every run —
-   * the global cap. Only counts runs that actually called the model
-   * (prompt_tokens set), so a run that failed before the API call costs $0.
-   */
-  function dailySpendUsd(ownerId?: string): number {
-    const rows = (
-      ownerId
-        ? db
-            .prepare(
-              `SELECT r.prompt_tokens as prompt_tokens, r.completion_tokens as completion_tokens
-               FROM runs r JOIN brands b ON b.id = r.brand_id
-               WHERE b.owner_id = ? AND r.created_at > datetime('now', '-1 day') AND r.prompt_tokens IS NOT NULL`
-            )
-            .all(ownerId)
-        : db
-            .prepare(
-              `SELECT prompt_tokens, completion_tokens FROM runs
-               WHERE created_at > datetime('now', '-1 day') AND prompt_tokens IS NOT NULL`
-            )
-            .all()
-    ) as Array<{ prompt_tokens: number; completion_tokens: number }>;
-    return rows.reduce((sum, r) => sum + estimateUsdCost(r.prompt_tokens, r.completion_tokens ?? 0), 0);
   }
 
   function ownerHasActiveRun(ownerId: string): boolean {
@@ -504,17 +519,30 @@ export function createApp() {
       res.status(429).json({ error: "rate_limited", message: "The daily run limit has been reached." });
       return;
     }
-    if (dailySpendUsd() >= config.GLOBAL_DAILY_SPEND_USD) {
-      res.status(429).json({
-        error: "spend_cap_reached",
-        message: "This free tool has reached its spend limit for today. Please try again tomorrow.",
+    const approvedForRun = JSON.parse(brand.approved_context_json) as Partial<ApprovedBrandContext>;
+    const rawForRun = brand.context_json ? (JSON.parse(brand.context_json) as BrandContext) : null;
+    const siteLanguage = detectSiteLanguage(`${rawForRun?.description ?? ""} ${rawForRun?.textExcerpt ?? ""}`);
+    if (siteLanguage === "other" && req.body?.confirmEnglish !== true) {
+      res.status(400).json({
+        error: "confirm_language",
+        message: "This site does not look like English. Confirm before we write English posts. We will not translate it on our own.",
       });
       return;
     }
-    if (dailySpendUsd(ownerId) >= config.PER_VISITOR_DAILY_SPEND_USD) {
+    const requestedVariant = req.body?.englishVariant;
+    const savedVariant = approvedForRun.englishVariant;
+    const englishVariant = requestedVariant === "us" || requestedVariant === "uk"
+      ? requestedVariant
+      : savedVariant === "us" || savedVariant === "uk"
+        ? savedVariant
+        : "uk";
+    const channel = req.body?.channel === "x" ? "x" : "linkedin";
+
+    if (spendUsd(db) >= config.GLOBAL_DAILY_SPEND_USD || spendUsd(db, ownerId) >= config.PER_VISITOR_DAILY_SPEND_USD) {
       res.status(429).json({
         error: "spend_cap_reached",
-        message: "You've reached today's free limit for this workspace. Please try again tomorrow.",
+        pricing: "placeholder_estimate",
+        message: "This free tool has reached its spend limit for today. Please try again tomorrow. The limit uses a placeholder estimate, not a provider bill.",
       });
       return;
     }
@@ -526,9 +554,33 @@ export function createApp() {
       return;
     }
 
-    const run = createRun(db, brand.id, task, preset, brand.approved_context_version);
+    const reservation = tryReserve(db, { ownerId, kind: "run", usd: config.RUN_RESERVATION_USD });
+    if (!reservation.ok) {
+      res.status(429).json({
+        error: "spend_cap_reached",
+        pricing: reservation.pricing,
+        message:
+          reservation.scope === "global"
+            ? "This free tool has reached its spend limit for today. Please try again tomorrow. The limit uses a placeholder estimate, not a provider bill."
+            : "You've reached today's free limit for this workspace. Please try again tomorrow. The limit uses a placeholder estimate, not a provider bill.",
+      });
+      return;
+    }
+    const run = createRun(db, brand.id, task, preset, brand.approved_context_version, {
+      mode: "posts",
+      englishVariant,
+      channel,
+      reservationId: reservation.id,
+    });
+    attachReservationToRun(db, reservation.id, run.id);
     const job = enqueueJob(db, { runId: run.id, phase: "brief" });
-    res.status(202).json({ run, jobId: job.id });
+    res.status(202).json({
+      run,
+      jobId: job.id,
+      englishVariant,
+      englishVariantSource: requestedVariant === "uk" || requestedVariant === "us" ? "request" : savedVariant ? "brand" : "default_british",
+      pricing: "placeholder_estimate",
+    });
   });
 
   function loadRunWithOwnerCheck(runId: string, ownerId: string) {
@@ -578,11 +630,54 @@ export function createApp() {
       };
     });
 
+    const posts = listPostsForRun(db, run.id).map((post) => {
+      const assets = listPostAssets(db, post.id).map((asset) => ({
+        id: asset.id,
+        kind: asset.kind,
+        pageIndex: asset.page_index,
+        width: asset.width,
+        height: asset.height,
+        mimeType: asset.mime_type,
+      }));
+      const label = postLabel(post, brand.approved_context_version);
+      return {
+        id: post.id,
+        position: post.position,
+        formatFamily: post.format_family,
+        compositionId: post.composition_id,
+        channel: post.channel,
+        englishVariant: post.english_variant,
+        title: post.title,
+        hook: post.hook,
+        hookAlternatives: JSON.parse(post.hook_alternatives_json),
+        caption: post.caption,
+        xCaption: post.x_caption,
+        altText: post.alt_text,
+        rationale: post.rationale,
+        formatNote: post.format_note,
+        pages: JSON.parse(post.pages_json),
+        pageCount: (JSON.parse(post.pages_json) as unknown[]).length,
+        status: post.status,
+        revision: post.revision,
+        label,
+        automatedChecksPassed: label === "Checks passed",
+        humanSignOff: false,
+        truthGuaranteed: false,
+        labelNote: "Automated checks on this revision. Not a human sign off. Not a guarantee the facts are true.",
+        error: post.error,
+        assets,
+        checks: post.review_json ? JSON.parse(post.review_json) : [],
+      };
+    });
+
     res.json({
       id: run.id,
       brandId: run.brand_id,
       task: run.task,
       preset: run.preset,
+      mode: run.mode ?? "legacy",
+      englishVariant: run.english_variant,
+      channel: run.channel,
       status: run.status,
       model: run.model,
       promptTokens: run.prompt_tokens,
@@ -591,6 +686,8 @@ export function createApp() {
       unknowns: run.unknowns_json ? JSON.parse(run.unknowns_json) : [],
       createdAt: run.created_at,
       outputs,
+      posts,
+      pricing: "placeholder_estimate",
     });
   });
 
@@ -645,6 +742,300 @@ export function createApp() {
     res.json(job);
   });
 
+  function loadOwnedPost(req: express.Request, postId: string) {
+    const post = getPost(db, postId);
+    if (!post) return null;
+    const run = getRun(db, post.run_id);
+    const brand = run ? getBrand(db, run.brand_id) : undefined;
+    if (!run || !brand || brand.owner_id !== req.auth!.ownerId) return null;
+    return { post, run, brand };
+  }
+
+  app.post("/api/brands/manual", requireAuth, requireCsrf, (req, res) => {
+    const name = typeof req.body?.name === "string" ? req.body.name.trim().slice(0, 120) : "";
+    const offer = typeof req.body?.offer === "string" ? req.body.offer.trim().slice(0, 600) : "";
+    const audience = typeof req.body?.audience === "string" ? req.body.audience.trim().slice(0, 300) : "";
+    const rawUrl = typeof req.body?.url === "string" ? req.body.url.trim() : "";
+    if (!name || !offer) {
+      res.status(400).json({ error: "invalid_body", message: "Add a business name and what you offer, then try again." });
+      return;
+    }
+    let sourceUrl = `manual:${name}`;
+    if (rawUrl) {
+      try {
+        validateUrlSyntax(rawUrl);
+        sourceUrl = rawUrl;
+      } catch (err) {
+        res.status(400).json({ error: "invalid_url", message: err instanceof Error ? err.message : "Invalid URL" });
+        return;
+      }
+    }
+    const brand = createBrand(db, req.auth!.ownerId, sourceUrl);
+    setBrandContext(db, brand.id, {
+      sourceUrl,
+      fetchedAt: new Date().toISOString(),
+      extractionMethod: "static-html-css",
+      title: name,
+      siteName: name,
+      description: offer,
+      logoCandidates: [],
+      colours: [],
+      cssCustomProperties: [],
+      fonts: [],
+      googleFontsLinks: [],
+      images: [],
+      textExcerpt: [offer, audience].filter(Boolean).join(" "),
+      textTruncated: false,
+      stylesheetsFetched: 0,
+      stylesheetsSkipped: 0,
+      unknowns: ["Entered by hand because the site could not be read.", audience ? "" : "Audience was not given."].filter(Boolean),
+    });
+    res.status(201).json({ brand: getBrand(db, brand.id) });
+  });
+
+  app.post("/api/brands/:id/owned-images", requireAuth, requireCsrf, async (req, res) => {
+    const brand = getBrand(db, req.params.id);
+    if (!brand || brand.owner_id !== req.auth!.ownerId) {
+      res.status(404).json({ error: "not_found" });
+      return;
+    }
+    if (req.body?.ownershipConfirmed !== true) {
+      res.status(400).json({
+        error: "ownership_required",
+        message: "Confirm you own this image before it can be used. We will not take pictures from the website on our own.",
+      });
+      return;
+    }
+    const mimeType = typeof req.body?.mimeType === "string" ? req.body.mimeType : "";
+    const imageBase64 = typeof req.body?.imageBase64 === "string" ? req.body.imageBase64 : "";
+    if (!ALLOWED_UPLOAD_MIME.has(mimeType) || !imageBase64) {
+      res.status(400).json({ error: "invalid_body", message: "Choose a PNG, JPEG, WebP or GIF." });
+      return;
+    }
+    const buffer = Buffer.from(imageBase64, "base64");
+    if (buffer.length === 0 || buffer.length > UPLOAD_CHECK_MAX_BYTES) {
+      res.status(400).json({ error: "invalid_body", message: "That image is empty or too large." });
+      return;
+    }
+    let size: { width: number; height: number } | null = null;
+    try {
+      size = assertRasterWithinLimits(buffer);
+    } catch (err) {
+      if (err instanceof ImageLimitError) {
+        res.status(400).json({ error: "image_too_large", message: err.message });
+        return;
+      }
+      throw err;
+    }
+    const id = newId("upload");
+    const ext = mimeType === "image/png" ? "png" : mimeType === "image/jpeg" ? "jpg" : mimeType === "image/webp" ? "webp" : "gif";
+    const dir = path.join(config.ASSET_DIR, "brands", brand.id, "owned");
+    fs.mkdirSync(dir, { recursive: true });
+    const localPath = path.join(dir, `${id}.${ext}`);
+    fs.writeFileSync(localPath, buffer);
+    db.prepare(
+      `INSERT INTO owned_uploads (id, brand_id, local_path, mime_type, byte_size, width, height, ownership_confirmed)
+       VALUES (?, ?, ?, ?, ?, ?, ?, 1)`
+    ).run(id, brand.id, localPath, mimeType, buffer.length, size?.width ?? null, size?.height ?? null);
+    const approved = brand.approved_context_json ? (JSON.parse(brand.approved_context_json) as ApprovedBrandContext) : {
+      logoAssetId: null,
+      colours: [],
+      fonts: [],
+      voiceNotes: "",
+    };
+    const ids = new Set(approved.approvedImageAssetIds ?? []);
+    ids.add(id);
+    setApprovedContext(db, brand.id, { ...approved, approvedImageAssetIds: [...ids] });
+    res.status(201).json({ id, width: size?.width ?? null, height: size?.height ?? null, ownershipConfirmed: true });
+  });
+
+  app.get("/api/brands/:id/owned-images", requireAuth, (req, res) => {
+    const brand = getBrand(db, req.params.id);
+    if (!brand || brand.owner_id !== req.auth!.ownerId) {
+      res.status(404).json({ error: "not_found" });
+      return;
+    }
+    res.json({
+      images: listOwnedUploads(db, brand.id).map((image) => ({
+        id: image.id,
+        mimeType: image.mime_type,
+        width: image.width,
+        height: image.height,
+      })),
+    });
+  });
+
+  app.patch("/api/posts/:id", requireAuth, requireCsrf, (req, res) => {
+    const found = loadOwnedPost(req, req.params.id);
+    if (!found) {
+      res.status(404).json({ error: "not_found" });
+      return;
+    }
+    try {
+      const post = editPostCopy(db, found.post.id, {
+        caption: typeof req.body?.caption === "string" ? req.body.caption : undefined,
+        altText: typeof req.body?.altText === "string" ? req.body.altText : undefined,
+        hook: typeof req.body?.hook === "string" ? req.body.hook : undefined,
+        xCaption: typeof req.body?.xCaption === "string" ? req.body.xCaption : undefined,
+      });
+      res.json({ id: post.id, revision: post.revision, label: postLabel(post, found.brand.approved_context_version) });
+    } catch (err) {
+      res.status(400).json({ error: "invalid_body", message: err instanceof Error ? err.message : "Could not save that edit." });
+    }
+  });
+
+  app.post("/api/posts/:id/undo", requireAuth, requireCsrf, (req, res) => {
+    const found = loadOwnedPost(req, req.params.id);
+    if (!found) {
+      res.status(404).json({ error: "not_found" });
+      return;
+    }
+    try {
+      const post = undoPost(db, found.post.id);
+      res.json({ id: post.id, revision: post.revision, caption: post.caption });
+    } catch (err) {
+      res.status(400).json({ error: "nothing_to_undo", message: err instanceof Error ? err.message : "Nothing to undo." });
+    }
+  });
+
+  app.post("/api/posts/:id/layout", requireAuth, requireCsrf, async (req, res) => {
+    const found = loadOwnedPost(req, req.params.id);
+    if (!found) {
+      res.status(404).json({ error: "not_found" });
+      return;
+    }
+    const compositionId = typeof req.body?.compositionId === "string" ? req.body.compositionId : "";
+    const reservation = tryReserve(db, {
+      ownerId: req.auth!.ownerId,
+      runId: found.run.id,
+      postId: found.post.id,
+      kind: "layout",
+      usd: config.EDIT_RESERVATION_USD,
+    });
+    if (!reservation.ok) {
+      res.status(429).json({ error: "spend_cap_reached", pricing: "placeholder_estimate", message: "Today's free limit has been reached." });
+      return;
+    }
+    try {
+      const post = await changePostLayout(db, found.post.id, compositionId);
+      res.json({ id: post.id, compositionId: post.composition_id, status: post.status, revision: post.revision });
+    } catch (err) {
+      res.status(400).json({ error: "invalid_body", message: err instanceof Error ? err.message : "Could not change the layout." });
+    } finally {
+      releaseReservation(db, reservation.id);
+    }
+  });
+
+  app.post("/api/posts/:id/regenerate", requireAuth, requireCsrf, async (req, res) => {
+    const found = loadOwnedPost(req, req.params.id);
+    if (!found) {
+      res.status(404).json({ error: "not_found" });
+      return;
+    }
+    const reservation = tryReserve(db, {
+      ownerId: req.auth!.ownerId,
+      runId: found.run.id,
+      postId: found.post.id,
+      kind: "regenerate",
+      usd: config.REGENERATE_RESERVATION_USD,
+    });
+    if (!reservation.ok) {
+      res.status(429).json({ error: "spend_cap_reached", pricing: "placeholder_estimate", message: "Today's free limit has been reached." });
+      return;
+    }
+    try {
+      const approved = JSON.parse(found.brand.approved_context_json ?? "{}") as ApprovedBrandContext;
+      const raw = found.brand.context_json ? (JSON.parse(found.brand.context_json) as BrandContext) : null;
+      const ledger = found.run.ledger_json ? (JSON.parse(found.run.ledger_json) as LedgerEntry[]) : [];
+      const pack = await generatePostConcepts({
+        task: `${found.run.task}. Replace only the ${found.post.format_family} post. ${typeof req.body?.instruction === "string" ? req.body.instruction : ""}`,
+        channel: found.post.channel,
+        englishVariant: found.post.english_variant,
+        voiceNotes: approved.voiceNotes ?? "",
+        ledger,
+        colours: approved.colours ?? [],
+        fonts: approved.fonts ?? [],
+        logoAssetId: approved.logoAssetId ?? null,
+        approvedImageIds: approved.approvedImageAssetIds ?? [],
+        businessSummary: raw?.description ?? "",
+        audienceHint: "",
+        count: 3,
+      });
+      const replacement = pack.posts.find((draft) => draft.formatFamily === found.post.format_family);
+      if (!replacement) throw new Error("The new draft did not include this post.");
+      const post = await regenerateOnePost(db, found.post.id, replacement);
+      res.json({ id: post.id, revision: post.revision, status: post.status });
+    } catch (err) {
+      res.status(500).json({ error: "regenerate_failed", message: err instanceof Error ? err.message : "Could not regenerate this post." });
+    } finally {
+      releaseReservation(db, reservation.id);
+    }
+  });
+
+  app.post("/api/posts/:id/retry", requireAuth, requireCsrf, async (req, res) => {
+    const found = loadOwnedPost(req, req.params.id);
+    if (!found) {
+      res.status(404).json({ error: "not_found" });
+      return;
+    }
+    await rerenderPost(db, found.post.id);
+    const post = getPost(db, found.post.id)!;
+    res.json({ id: post.id, status: post.status });
+  });
+
+  app.get("/api/posts/:id/package.zip", (req, res) => {
+    const post = getPost(db, req.params.id);
+    const run = post ? getRun(db, post.run_id) : undefined;
+    const brand = run ? getBrand(db, run.brand_id) : undefined;
+    if (!post || !run || !brand || !canAccessBrand(req, db, brand)) {
+      res.status(404).json({ error: "not_found" });
+      return;
+    }
+    const ledger = run.ledger_json ? (JSON.parse(run.ledger_json) as { id: string; sourceUrl: string }[]) : [];
+    const zip = buildPostZip(post, listPostAssets(db, post.id), ledger.map((entry) => ({ id: entry.id, sourceUrl: entry.sourceUrl })));
+    res.set("Content-Type", "application/zip");
+    res.set("Content-Disposition", `attachment; filename="post-${post.format_family}.zip"`);
+    res.send(zip);
+  });
+
+  app.get("/api/runs/:id/package.zip", (req, res) => {
+    const run = getRun(db, req.params.id);
+    const brand = run ? getBrand(db, run.brand_id) : undefined;
+    if (!run || !brand || !canAccessBrand(req, db, brand)) {
+      res.status(404).json({ error: "not_found" });
+      return;
+    }
+    const ledger = run.ledger_json ? (JSON.parse(run.ledger_json) as { id: string; sourceUrl: string }[]) : [];
+    const refs = ledger.map((entry) => ({ id: entry.id, sourceUrl: entry.sourceUrl }));
+    const zip = buildRunZip(listPostsForRun(db, run.id).map((post) => ({ post, assets: listPostAssets(db, post.id), ledger: refs })));
+    res.set("Content-Type", "application/zip");
+    res.set("Content-Disposition", 'attachment; filename="posts.zip"');
+    res.send(zip);
+  });
+
+  app.get("/api/post-assets/:id", (req, res) => {
+    const asset = db.prepare(`SELECT * FROM post_assets WHERE id = ?`).get(req.params.id) as
+      | { id: string; post_id: string; file_path: string | null; mime_type: string | null }
+      | undefined;
+    if (!asset?.file_path) {
+      res.status(404).json({ error: "not_found" });
+      return;
+    }
+    const post = getPost(db, asset.post_id);
+    const run = post ? getRun(db, post.run_id) : undefined;
+    const brand = run ? getBrand(db, run.brand_id) : undefined;
+    if (!post || !run || !brand || !canAccessBrand(req, db, brand)) {
+      res.status(404).json({ error: "not_found" });
+      return;
+    }
+    if (!fs.existsSync(asset.file_path)) {
+      res.status(404).json({ error: "not_found" });
+      return;
+    }
+    res.set("Content-Type", asset.mime_type ?? "application/octet-stream");
+    fs.createReadStream(asset.file_path).pipe(res);
+  });
+
   // --- Own frontend (public/) ---
   const publicDir = path.join(__dirname, "..", "public");
   app.get("/", (req, res) => serveStaticFile(publicDir, "index.html", req, res));
@@ -660,6 +1051,12 @@ export function createApp() {
 
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   app.use((err: unknown, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
+    const status = typeof err === "object" && err && "status" in err ? Number((err as { status?: number }).status) : 0;
+    const type = typeof err === "object" && err && "type" in err ? String((err as { type?: string }).type) : "";
+    if (status === 413 || type === "entity.too.large") {
+      res.status(413).json({ error: "payload_too_large", message: "That upload is too large." });
+      return;
+    }
     // eslint-disable-next-line no-console
     console.error(err);
     res.status(500).json({ error: "internal_error" });
@@ -671,6 +1068,7 @@ export function createApp() {
 if (require.main === module) {
   fs.mkdirSync(config.ASSET_DIR, { recursive: true });
   const { app, db } = createApp();
+  purgeExpiredBrands(db);
   const worker = startWorker(db, { import: runImportJob, brief: runBriefJob, generate: runGenerateJob });
 
   const server = app.listen(config.PORT, () => {

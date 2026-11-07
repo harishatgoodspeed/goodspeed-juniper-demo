@@ -1,13 +1,11 @@
 # Goodspeed Brand OS — free tool
 
-A public, free tool: paste a URL, approve a brand (palette, fonts, logo,
-voice), and get real on-brand LinkedIn/Instagram/X images plus a post
-caption, checked against your brand before you see them, plus a
-downloadable brand snapshot. No signup, no login, no email gate before
-download. Built on the same pipeline a private prototype used internally:
-import a real site, draft briefs against it, render real assets, review
-them against the brand with a bounded auto-repair loop, and publish a
-shareable, access-controlled result page.
+A public, free tool: paste a URL, confirm the brand we found, and download
+three different posts (a carousel PDF, a saveable image, and a proof led
+post or a text fallback). Each one has a caption, alt text, and checks
+against a source ledger taken from the page, not from the model's own fact
+list. No signup, no login, and no email gate before download. Older runs
+that produced the previous six files stay readable. Nothing here is deployed.
 
 **Status: working end to end, verified live against a real site with a real
 `ANTHROPIC_API_KEY`, not yet deployed.** Every visitor gets an isolated,
@@ -45,7 +43,7 @@ then fails clearly at the brief step, rather than faking a result.
 npm test
 ```
 
-167 tests, entirely offline, running under `node --env-file=.env.test`:
+184 tests pass, and 1 is skipped when no local TTF fixture is present. They run offline under `node --env-file=.env.test`:
 SSRF checks spin up real local HTTP servers to prove loopback/metadata
 addresses are refused; the renderer's tests launch a real headless Chromium
 and assert on real PNG/PDF bytes, real sampled pixel colours, and a real
@@ -61,6 +59,23 @@ run it) — real API usage is exercised manually against a live site, see
 below.
 
 ## The free journey
+
+The default run is three post packages, not six files. Paste a URL, watch the
+real import state (Reading your website, Finding your brand, Preparing your
+ideas), confirm one brand card, then download a carousel PDF, a saveable
+image, and a proof led post or a text fallback. UK or US spelling is an
+explicit choice. The Goodspeed ladder appears only after something is ready,
+and its button goes to https://goodspeed.studio/contact. Prices are not
+invented here. Legacy runs with the older six outputs still open.
+
+Spend caps reserve a placeholder estimate before work is queued and record
+token usage from generation and review, including failures that returned
+usage. Those dollar figures are placeholders, not a provider bill.
+
+Anonymous brands and their files are deleted after `RETENTION_DAYS` (30 by
+default). The server runs that purge when the process starts. Share pages and
+zip manifests do not include email addresses. Rate limits are stored in
+SQLite. The app does not trust `X-Forwarded-For`.
 
 ```
 GET /                          → paste a URL, no account

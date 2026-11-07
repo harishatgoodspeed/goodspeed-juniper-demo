@@ -129,14 +129,23 @@ test("rejects a response that fails Zod shape validation instead of silently coe
   await assert.rejects(() => generateBriefs(baseInput(), { client }), BriefValidationError);
 });
 
-test("rejects a response missing one of the required output types", async () => {
+test("accepts three briefs and does not require the old set of six", async () => {
+  const client = mockClient([
+    validBrief("linkedin_image"),
+    validBrief("x_image", { purpose: "A different post, not a resize" }),
+    validBrief("post_copy"),
+  ]);
+  const result = await generateBriefs(baseInput(), { client });
+  assert.equal(result.briefs.length, 3);
+});
+
+test("rejects a duplicate output type instead of treating a second file as a new post", async () => {
   const client = mockClient([
     ...sixValidBriefs().slice(0, 5),
-    // no post_copy — a duplicate slide instead
     validBrief("slide", { purpose: "duplicate slide instead of post_copy" }),
   ]);
 
-  await assert.rejects(() => generateBriefs(baseInput(), { client }), /missing a brief for output type/i);
+  await assert.rejects(() => generateBriefs(baseInput(), { client }), /duplicate output type/i);
 });
 
 test("rejects a post_copy brief missing postCopyText", async () => {

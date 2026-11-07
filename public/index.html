@@ -7,97 +7,172 @@
   <link rel="stylesheet" href="/styles.css">
 </head>
 <body>
+  <a class="skip" href="#app">Skip to content</a>
   <header class="topbar">
     <span class="brand">Goodspeed Brand OS</span>
     <span class="phase-tag">Free tool</span>
-    <button id="logoutBtn" class="btn btn-ghost">Start over</button>
+    <button id="logoutBtn" class="btn btn-ghost" type="button">Start over</button>
   </header>
 
   <main id="app" class="wrap">
-    <section id="importView" hidden>
-      <h1>Paste your URL. Get on-brand posts, already checked.</h1>
-      <p>We fetch your site's own palette, type and logo, you approve what to use, and we draft real LinkedIn posts, checked against your brand before you see them. No account, no agent setup.</p>
+    <ol id="steps" class="steps" aria-label="Progress">
+      <li data-step="url">URL</li>
+      <li data-step="read">Read</li>
+      <li data-step="brand">Brand</li>
+      <li data-step="posts">Posts</li>
+    </ol>
+
+    <section id="urlView">
+      <h1 tabindex="-1">Paste your URL. Get three posts worth publishing, in your brand.</h1>
+      <p>One website address. No account, no email, and no social connection.</p>
       <form id="importForm" class="stack">
         <label for="siteUrl">Website address</label>
-        <input id="siteUrl" name="url" type="url" placeholder="https://example.com" required>
-        <button type="submit" class="btn btn-primary">Import brand context</button>
+        <input id="siteUrl" name="url" type="url" placeholder="https://example.com" required autocomplete="url">
+        <button type="submit" class="btn btn-primary">Make my posts</button>
         <p id="importError" class="error" role="alert" hidden></p>
       </form>
-
-      <div id="jobStatus" class="status-card" hidden>
-        <p id="jobStatusText" aria-live="polite"></p>
+      <div class="preview" aria-hidden="true">
+        <p class="eyebrow">What you get</p>
+        <ul>
+          <li>A carousel you can download as a PDF</li>
+          <li>A saveable checklist or framework image</li>
+          <li>A proof led post, or a text post if there is no picture you own</li>
+        </ul>
       </div>
-
-      <div id="brandList"></div>
     </section>
 
-    <section id="resultView" hidden>
-      <button id="backBtn" class="btn btn-ghost">Back to imports</button>
-      <h1 id="resultTitle">Brand import</h1>
-      <p id="resultMeta" class="meta"></p>
-
-      <div id="resultUnknowns" class="callout" hidden>
-        <h2>Unknowns</h2>
-        <ul id="unknownsList"></ul>
+    <section id="progressView" hidden>
+      <h1 tabindex="-1">Reading your site</h1>
+      <p id="progressText" role="status" aria-live="polite">Reading your website</p>
+      <div id="blockedBox" hidden>
+        <p id="blockedText" class="error" role="alert"></p>
+        <div class="row">
+          <button id="retryImport" class="btn btn-primary" type="button">Try again</button>
+          <button id="correctUrl" class="btn btn-ghost" type="button">Use a different address</button>
+        </div>
+        <form id="manualForm" class="stack">
+          <h2>Or tell us the basics</h2>
+          <label for="manualName">Business name</label>
+          <input id="manualName" type="text" required>
+          <label for="manualOffer">What you offer</label>
+          <textarea id="manualOffer" rows="3" required></textarea>
+          <label for="manualAudience">Who it is for <span class="hint">optional</span></label>
+          <input id="manualAudience" type="text">
+          <button type="submit" class="btn btn-ghost">Use this instead</button>
+          <p id="manualError" class="error" role="alert" hidden></p>
+        </form>
       </div>
+    </section>
 
-      <h2>Logo candidates</h2>
-      <p class="hint">Pick the one to carry forward, or treat none of them as approved.</p>
-      <div id="logoCandidates" class="card-grid"></div>
-
-      <h2>Colour candidates</h2>
-      <p class="hint">Declaration count is how many times a value appeared in the stylesheets, not a measure of visual prominence.</p>
-      <div id="colourCandidates" class="card-grid"></div>
-
-      <h2>Type candidates</h2>
-      <div id="fontCandidates" class="card-grid"></div>
-
-      <h2>Readable copy excerpt</h2>
-      <p id="textExcerpt" class="excerpt"></p>
-
-      <h2>Source files</h2>
-      <ul id="sourceAssets" class="file-list"></ul>
-
-      <h2>Voice</h2>
-      <p class="hint">How should your copy sound? Leave this blank and we will keep it plain and confident, with no exclamation points.</p>
-      <textarea id="voiceNotes" rows="3" placeholder="e.g. Confident, no exclamation points, short sentences."></textarea>
-
+    <section id="confirmView" hidden>
+      <button id="backToUrl" class="btn btn-ghost" type="button">Back</button>
+      <h1 tabindex="-1">Does this look like you?</h1>
+      <p>We filled this in from your site. Unknown means we did not find it. Change anything that is wrong, then continue.</p>
+      <article id="brandCard" class="brand-card"></article>
+      <details class="disclosure">
+        <summary>Spelling, channel, and your own images</summary>
+        <fieldset>
+          <legend>Spelling</legend>
+          <label><input type="radio" name="english" value="uk" checked> British English</label>
+          <label><input type="radio" name="english" value="us"> American English</label>
+          <p id="englishHint" class="hint"></p>
+        </fieldset>
+        <fieldset>
+          <legend>Channel</legend>
+          <label><input type="radio" name="channel" value="linkedin" checked> LinkedIn</label>
+          <label><input type="radio" name="channel" value="x"> X</label>
+        </fieldset>
+        <div id="languageGate" hidden>
+          <p>This site does not look like English. We will not translate it unless you ask.</p>
+          <label><input id="confirmEnglish" type="checkbox"> Write the posts in English anyway</label>
+        </div>
+        <form id="ownedForm" class="stack">
+          <label for="ownedFile">Add an image you own <span class="hint">optional</span></label>
+          <input id="ownedFile" type="file" accept="image/png,image/jpeg,image/webp,image/gif">
+          <label><input id="ownConfirm" type="checkbox"> I own this image and you may use it in these posts</label>
+          <button type="submit" class="btn btn-ghost">Add image</button>
+          <p id="ownedStatus" class="hint" role="status"></p>
+        </form>
+        <label for="voiceNotes">Voice <span class="hint">optional</span></label>
+        <textarea id="voiceNotes" rows="2" placeholder="Plain and specific. Short sentences."></textarea>
+        <label for="runTask">What the posts should cover <span class="hint">optional</span></label>
+        <input id="runTask" type="text" placeholder="Leave blank and we will choose useful topics from the site">
+      </details>
       <div class="actions">
-        <button id="approveBtn" class="btn btn-primary">Save approved selection</button>
-        <p id="approveStatus" aria-live="polite"></p>
+        <button id="approveBtn" class="btn btn-primary" type="button">Looks right</button>
+        <p id="approveError" class="error" role="alert" hidden></p>
       </div>
-      <p class="hint"><a id="snapshotLink" href="#" target="_blank" rel="noopener">Download your brand snapshot (brand.md)</a>. A Claude ready file with your approved palette, fonts and voice, free, no email required.</p>
+    </section>
 
-      <h2>Get your on-brand posts</h2>
-      <p class="hint">Needs an approved selection saved above first. We will draft LinkedIn, Instagram and X images plus a post caption, checked against your brand before you see them.</p>
-      <form id="runForm" class="stack">
-        <label for="runTask">What should these posts be about</label>
-        <input id="runTask" name="task" type="text" placeholder="Launch announcement for the new collection" required>
-        <button type="submit" class="btn btn-primary">Generate posts</button>
-        <p id="runError" class="error" role="alert" hidden></p>
-      </form>
-      <div id="runStatus" class="status-card" hidden>
-        <p id="runStatusText" aria-live="polite"></p>
+    <section id="resultsView" hidden>
+      <button id="backToBrand" class="btn btn-ghost" type="button">Back</button>
+      <h1 tabindex="-1">Your posts</h1>
+      <p id="runStatusText" role="status" aria-live="polite"></p>
+      <div id="postGrid" class="post-grid"></div>
+      <div id="keepBar" class="row" hidden>
+        <button id="downloadAll" class="btn btn-primary" type="button">Download all</button>
+        <a id="snapshotLink" class="btn btn-ghost" href="#">Download brand.md</a>
       </div>
-      <div id="runResult"></div>
+      <aside id="ladder" class="ladder" hidden>
+        <h2>If you want a person to take it further</h2>
+        <ol>
+          <li><strong>Free starter.</strong> A human made starter in 24 to 48 hours. Still free.</li>
+          <li><strong>Brand brain and templates.</strong> Built in the tools you already use. Price is confirmed with Goodspeed. It is not listed here.</li>
+          <li><strong>Upkeep.</strong> We keep the system current as the brand changes.</li>
+        </ol>
+        <a class="btn btn-primary" href="https://goodspeed.studio/contact" target="_blank" rel="noopener">Talk to Goodspeed</a>
+        <form id="leadForm" class="stack">
+          <h3>Or leave a note</h3>
+          <p class="hint">Optional. Nothing is sent unless you tick consent.</p>
+          <label for="leadEmail">Email</label>
+          <input id="leadEmail" type="email" autocomplete="email">
+          <label for="leadTool">Preferred tool <span class="hint">optional</span></label>
+          <input id="leadTool" type="text">
+          <label for="leadNotes">Notes <span class="hint">optional</span></label>
+          <textarea id="leadNotes" rows="2"></textarea>
+          <label><input id="leadConsent" type="checkbox"> I am happy for Goodspeed to contact me about this.</label>
+          <button type="submit" class="btn btn-ghost">Send</button>
+          <p id="leadStatus" class="hint" role="status"></p>
+        </form>
+      </aside>
+    </section>
 
-      <h2>Check an existing design against your brand</h2>
-      <p class="hint">Upload an image (PNG, JPEG, WebP or GIF) and we will check its colours against your approved palette. Colour only for now, not fonts or logo fidelity.</p>
-      <form id="uploadCheckForm" class="stack">
-        <input id="uploadCheckFile" name="file" type="file" accept="image/png,image/jpeg,image/webp,image/gif" required>
-        <button type="submit" class="btn btn-primary">Check against our brand</button>
-        <p id="uploadCheckError" class="error" role="alert" hidden></p>
-      </form>
-      <div id="uploadCheckResult"></div>
-
-      <h2>Sharing</h2>
-      <p class="hint">Results are private until you enable a link. Anyone with an enabled link can view the result page and download its outputs.</p>
-      <button id="enableShareBtn" class="btn btn-primary">Enable a share link</button>
-      <div id="shareReveal" class="status-card" hidden></div>
-      <ul id="shareList" class="file-list"></ul>
+    <section id="editorView" hidden>
+      <button id="closeEditor" class="btn btn-ghost" type="button">Back to posts</button>
+      <h1 id="editorTitle" tabindex="-1">Edit this post</h1>
+      <div class="editor-tabs">
+        <button type="button" id="tabEdit" class="btn btn-ghost" aria-pressed="true">Edit</button>
+        <button type="button" id="tabPreview" class="btn btn-ghost" aria-pressed="false">Preview</button>
+      </div>
+      <div class="editor editing">
+        <div id="editorPane" class="editor-pane">
+          <label for="hookSelect">Hook</label>
+          <select id="hookSelect"></select>
+          <label for="captionField">Caption</label>
+          <textarea id="captionField" rows="10"></textarea>
+          <label for="altField">Alt text</label>
+          <textarea id="altField" rows="3"></textarea>
+          <label for="instruction">Instruction <span class="hint">optional</span></label>
+          <input id="instruction" type="text" placeholder="Make this shorter">
+          <div class="row">
+            <button id="saveCopy" class="btn btn-primary" type="button">Edit copy</button>
+            <button id="shorterBtn" class="btn btn-ghost" type="button">Make this shorter</button>
+            <button id="regenBtn" class="btn btn-ghost" type="button">Regenerate this post</button>
+            <button id="undoBtn" class="btn btn-ghost" type="button">Undo</button>
+          </div>
+          <label for="layoutSelect">Change layout</label>
+          <select id="layoutSelect"></select>
+          <button id="applyLayout" class="btn btn-ghost" type="button">Apply layout</button>
+          <p id="editorError" class="error" role="alert" hidden></p>
+          <p id="editorStatus" class="hint" role="status"></p>
+        </div>
+        <div id="previewPane" class="preview-pane">
+          <div id="editorPreview"></div>
+          <p id="editorCaption" class="caption"></p>
+        </div>
+      </div>
     </section>
   </main>
-
   <script src="/app.js"></script>
 </body>
 </html>

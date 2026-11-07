@@ -16,6 +16,7 @@ export interface JobRow {
   heartbeat_at: string | null;
   created_at: string;
   updated_at: string;
+  progress?: string | null;
 }
 
 export function enqueueJob(
@@ -34,6 +35,12 @@ export function enqueueJob(
 
 export function getJob(db: Database.Database, id: string): JobRow | undefined {
   return db.prepare("SELECT * FROM jobs WHERE id = ?").get(id) as JobRow | undefined;
+}
+
+export function setJobProgress(db: Database.Database, id: string, progress: string): void {
+  db.prepare(
+    "UPDATE jobs SET progress = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id = ?"
+  ).run(progress, id);
 }
 
 function runningCount(db: Database.Database): number {

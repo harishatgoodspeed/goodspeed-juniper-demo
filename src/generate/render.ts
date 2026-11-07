@@ -247,6 +247,7 @@ export async function renderOutput(brief: Brief, assets: RenderAssets, outDir: s
       const backgroundHex = template.regions.find((r) => r.label === "background")?.expectedHex ?? "#ffffff";
       const logoCheck = await evaluateLogoCheck(page, browser, brief, assets.logoPath, backgroundHex);
       const overflow = await evaluateOverflow(page);
+      const text = await page.evaluate(() => document.body.innerText);
 
       let filePath: string;
 
@@ -284,6 +285,7 @@ export async function renderOutput(brief: Brief, assets: RenderAssets, outDir: s
         fontChecks,
         logoCheck,
         overflow,
+        text,
       };
     } finally {
       await context.close();

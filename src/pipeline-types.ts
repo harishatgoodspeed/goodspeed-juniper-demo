@@ -113,14 +113,24 @@ export interface RenderEvidence {
   logoCheck: LogoCheckEvidence | null;
   /** True if content overflowed its container at render time — must be checked, not assumed false. */
   overflow: boolean;
-  /** For post_copy: the literal text produced, so review's copy check has something to assess. */
+  /** Literal words that were rendered, including headings, labels, captions and carousel pages. */
   text?: string;
+  /** Present when the renderer measured overflow, overlap, contrast and type size. */
+  layout?: LayoutEvidence;
 }
 
 export type CheckStatus = "pass" | "fail" | "not_applicable" | "not_verified";
 
+export interface LayoutEvidence {
+  overflow: boolean;
+  overlap: boolean;
+  minBodyPx: number;
+  contrastRatio: number;
+  problems: string[];
+}
+
 export interface ReviewCheck {
-  kind: "colour" | "typography" | "logo" | "copy";
+  kind: "colour" | "typography" | "logo" | "copy" | "layout";
   status: CheckStatus;
   observed: string;
   approved: string;

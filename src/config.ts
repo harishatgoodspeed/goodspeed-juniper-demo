@@ -48,9 +48,15 @@ const schema = z.object({
 
   // PLACEHOLDER values — tune once real free-tool traffic/cost data exists.
   // Estimated from Claude Sonnet 5.5 list pricing ($2/$10 per MTok); see
-  // estimateUsdCost() below, used to gate POST /api/brands/:id/runs.
+  // estimateUsdCost() below. These are safety caps on a placeholder estimate,
+  // not a provider billing cap and not a confirmed price.
   PER_VISITOR_DAILY_SPEND_USD: z.coerce.number().positive().default(2.0),
   GLOBAL_DAILY_SPEND_USD: z.coerce.number().positive().default(50.0),
+  // PLACEHOLDER reservation taken before a run, edit, or regeneration is queued.
+  RUN_RESERVATION_USD: z.coerce.number().positive().default(0.35),
+  EDIT_RESERVATION_USD: z.coerce.number().positive().default(0.05),
+  REGENERATE_RESERVATION_USD: z.coerce.number().positive().default(0.12),
+  MAX_POSTS_PER_RUN: z.coerce.number().int().min(3).max(5).default(3),
 
   // PLACEHOLDER — optional. When set, a notification is posted here on every
   // new email-capture submission (see src/leads.ts). No-op when unset.

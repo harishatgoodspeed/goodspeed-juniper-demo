@@ -1,5 +1,6 @@
 import type Database from "better-sqlite3";
 import type { JobRow } from "../jobs";
+import { setJobProgress } from "../jobs";
 import { getBrand, setBrandContext, setBrandStatus, addSourceAsset } from "../brands";
 import { fetchBrandSource } from "./fetch";
 import { extractBrandContext } from "./extract";
@@ -14,18 +15,25 @@ export async function runImportJob(db: Database.Database, job: JobRow): Promise<
   if (!brand) throw new Error(`Brand ${job.brand_id} not found`);
 
   setBrandStatus(db, brand.id, "importing");
+  setJobProgress(db, job.id, "reading_website");
 
   try {
-    await runImport(db, brand.id, brand.source_url);
+    await runImport(db, brand.id, brand.source_url, () => setJobProgress(db, job.id, "finding_brand"));
   } catch (err) {
     setBrandStatus(db, brand.id, "failed", err instanceof Error ? err.message : String(err));
     throw err;
   }
 }
 
-async function runImport(db: Database.Database, brandId: string, sourceUrl: string): Promise<void> {
+async function runImport(
+  db: Database.Database,
+  brandId: string,
+  sourceUrl: string,
+  onBrand: () => void
+): Promise<void> {
   const brand = { id: brandId, source_url: sourceUrl };
   const source = await fetchBrandSource(brand.source_url);
+  onBrand();
   const context = extractBrandContext({
     sourceUrl: brand.source_url,
     html: source.html,

@@ -15,6 +15,11 @@ export interface RunRow {
   elapsed_ms: number | null;
   status: "queued" | "briefing" | "generating" | "reviewing" | "completed" | "partial" | "failed";
   created_at: string;
+  mode?: "legacy" | "posts" | string;
+  english_variant?: string | null;
+  channel?: string | null;
+  reservation_id?: string | null;
+  ledger_json?: string | null;
 }
 
 export function createRun(
@@ -22,12 +27,29 @@ export function createRun(
   brandId: string,
   task: string,
   preset: string | null,
-  contextVersion: number
+  contextVersion: number,
+  options: {
+    mode?: "legacy" | "posts";
+    englishVariant?: "uk" | "us" | null;
+    channel?: "linkedin" | "x" | null;
+    reservationId?: string | null;
+  } = {}
 ): RunRow {
   const id = newId("run");
   db.prepare(
-    "INSERT INTO runs (id, brand_id, task, preset, context_version, status) VALUES (?, ?, ?, ?, ?, 'queued')"
-  ).run(id, brandId, task, preset, contextVersion);
+    `INSERT INTO runs (id, brand_id, task, preset, context_version, status, mode, english_variant, channel, reservation_id)
+     VALUES (?, ?, ?, ?, ?, 'queued', ?, ?, ?, ?)`
+  ).run(
+    id,
+    brandId,
+    task,
+    preset,
+    contextVersion,
+    options.mode ?? "legacy",
+    options.englishVariant ?? null,
+    options.channel ?? null,
+    options.reservationId ?? null
+  );
   return getRun(db, id)!;
 }
 
@@ -43,6 +65,10 @@ export function getLatestRunForBrand(db: Database.Database, brandId: string): Ru
 
 export function setRunStatus(db: Database.Database, id: string, status: RunRow["status"]): void {
   db.prepare("UPDATE runs SET status = ? WHERE id = ?").run(status, id);
+}
+
+export function setRunLedger(db: Database.Database, id: string, ledgerJson: string): void {
+  db.prepare("UPDATE runs SET ledger_json = ? WHERE id = ?").run(ledgerJson, id);
 }
 
 export function setRunBriefs(

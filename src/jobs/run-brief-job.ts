@@ -4,8 +4,9 @@ import { getBrand } from "../brands";
 import { getRun, setRunBriefs, setRunStatus } from "../runs";
 import { generateBriefs as realGenerateBriefs, type ApprovedBrandContext } from "../llm";
 import type { BrandContext } from "../import/types";
+import { runPostsBriefJob, type PostsJobDeps } from "./run-posts-job";
 
-export interface RunBriefJobDeps {
+export interface RunBriefJobDeps extends PostsJobDeps {
   /** Injectable for tests, so this handler never needs a real ANTHROPIC_API_KEY to be exercised offline. */
   generateBriefs?: typeof realGenerateBriefs;
   /** Injectable for tests, so a successful brief job doesn't also need the generate job's dependencies. */
@@ -23,6 +24,17 @@ export async function runBriefJob(db: Database.Database, job: JobRow, deps: RunB
   if (!brand) throw new Error(`Brand ${run.brand_id} not found`);
   if (!brand.context_json) throw new Error(`Brand ${brand.id} has no imported context yet`);
   if (!brand.approved_context_json) throw new Error(`Brand ${brand.id} has no approved context yet`);
+
+  if ((run.mode ?? "legacy") === "posts") {
+    try {
+      await runPostsBriefJob(db, job, deps);
+      enqueueNext(db, { runId: run.id, phase: "generate" });
+    } catch (err) {
+      setRunStatus(db, run.id, "failed");
+      throw err;
+    }
+    return;
+  }
 
   setRunStatus(db, run.id, "briefing");
 
