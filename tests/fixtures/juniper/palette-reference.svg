@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 480 160" role="img" aria-labelledby="t d">
+  <title id="t">Juniper Goods — palette reference</title>
+  <desc id="d">Four declared swatches: background, pine, rust and ink, each with its hex value.</desc>
+  <rect width="480" height="160" fill="#FFFFFF"/>
+  <g font-family="Arial, sans-serif" font-size="12" fill="#2B2B28">
+    <rect x="16" y="16" width="100" height="70" fill="#F2ECDF" stroke="#D8D0BE"/>
+    <text x="16" y="102">Background</text>
+    <text x="16" y="116">#F2ECDF</text>
+
+    <rect x="136" y="16" width="100" height="70" fill="#1F3A2E"/>
+    <text x="136" y="102">Pine</text>
+    <text x="136" y="116">#1F3A2E</text>
+
+    <rect x="256" y="16" width="100" height="70" fill="#C97B4A"/>
+    <text x="256" y="102">Rust</text>
+    <text x="256" y="116">#C97B4A</text>
+
+    <rect x="376" y="16" width="88" height="70" fill="#2B2B28"/>
+    <text x="376" y="102">Ink</text>
+    <text x="376" y="116">#2B2B28</text>
+  </g>
+  <text x="16" y="146" font-family="Arial, sans-serif" font-size="11" fill="#7C746C">Declared swatch values for the fictional Juniper Goods demo brand.</text>
+</svg>

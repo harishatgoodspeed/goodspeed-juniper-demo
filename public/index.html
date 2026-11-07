@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="en-GB">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Goodspeed Brand OS</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <header class="topbar">
+    <span class="brand">Goodspeed Brand OS</span>
+    <span class="phase-tag">Phase 1 prototype: brand import only</span>
+    <button id="logoutBtn" class="btn btn-ghost" hidden>Sign out</button>
+  </header>
+
+  <main id="app" class="wrap">
+    <section id="loginView" hidden>
+      <h1>Sign in</h1>
+      <p>This is a private prototype. Enter the access code to continue.</p>
+      <form id="loginForm" class="stack">
+        <label for="accessCode">Access code</label>
+        <input id="accessCode" name="code" type="password" autocomplete="current-password" required>
+        <button type="submit" class="btn btn-primary">Sign in</button>
+        <p id="loginError" class="error" role="alert" hidden></p>
+      </form>
+    </section>
+
+    <section id="importView" hidden>
+      <h1>Import a brand</h1>
+      <p>Paste a public website address. We fetch the page and its stylesheets only, extract a candidate palette, type and logo, and show you exactly where each fact came from before anything is used.</p>
+      <form id="importForm" class="stack">
+        <label for="siteUrl">Website address</label>
+        <input id="siteUrl" name="url" type="url" placeholder="https://example.com" required>
+        <button type="submit" class="btn btn-primary">Import brand context</button>
+        <p id="importError" class="error" role="alert" hidden></p>
+      </form>
+
+      <div id="jobStatus" class="status-card" hidden>
+        <p id="jobStatusText" aria-live="polite"></p>
+      </div>
+
+      <div id="brandList"></div>
+    </section>
+
+    <section id="resultView" hidden>
+      <button id="backBtn" class="btn btn-ghost">Back to imports</button>
+      <h1 id="resultTitle">Brand import</h1>
+      <p id="resultMeta" class="meta"></p>
+
+      <div id="resultUnknowns" class="callout" hidden>
+        <h2>Unknowns</h2>
+        <ul id="unknownsList"></ul>
+      </div>
+
+      <h2>Logo candidates</h2>
+      <p class="hint">Pick the one to carry forward, or treat none of them as approved.</p>
+      <div id="logoCandidates" class="card-grid"></div>
+
+      <h2>Colour candidates</h2>
+      <p class="hint">Declaration count is how many times a value appeared in the stylesheets, not a measure of visual prominence.</p>
+      <div id="colourCandidates" class="card-grid"></div>
+
+      <h2>Type candidates</h2>
+      <div id="fontCandidates" class="card-grid"></div>
+
+      <h2>Readable copy excerpt</h2>
+      <p id="textExcerpt" class="excerpt"></p>
+
+      <h2>Source files</h2>
+      <ul id="sourceAssets" class="file-list"></ul>
+
+      <div class="actions">
+        <button id="approveBtn" class="btn btn-primary">Save approved selection</button>
+        <p id="approveStatus" aria-live="polite"></p>
+      </div>
+    </section>
+  </main>
+
+  <script src="/app.js"></script>
+</body>
+</html>

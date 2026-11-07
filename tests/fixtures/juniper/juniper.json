@@ -1,0 +1,34 @@
+{
+  "fictional": true,
+  "name": "Juniper Goods",
+  "sourceLabel": "juniper-goods.example",
+  "sourceNote": "A fictional source. Nothing was actually imported from a working integration.",
+  "palette": [
+    { "name": "Background", "hex": "#F2ECDF" },
+    { "name": "Pine", "hex": "#1F3A2E" },
+    { "name": "Rust", "hex": "#C97B4A" },
+    { "name": "Ink", "hex": "#2B2B28" }
+  ],
+  "type": {
+    "heading": {
+      "declared": "Canela",
+      "status": "todo",
+      "note": "Licensed Canela files were not sourced for this demo. Headings shown use Goodspeed's own display face instead, labelled as a fallback, never presented as Canela."
+    },
+    "body": {
+      "declared": "Inter",
+      "status": "loaded",
+      "source": "Google Fonts",
+      "note": "Loaded legitimately for Juniper's own asset captions and the interactive guide."
+    }
+  },
+  "voice": [
+    "Write like the person who actually camps, not like the brand team.",
+    "Confident, outdoors-first, no exclamation points."
+  ],
+  "unknowns": [
+    "No approved logo file was supplied for this demo. A temporary text lockup stands in for it.",
+    "Real product photography has not been produced. An SVG illustration stands in for it.",
+    "No licensed Canela font files are available for this demo."
+  ]
+}

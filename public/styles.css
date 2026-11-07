@@ -1,0 +1,74 @@
+:root {
+  --bg: #F9F2ED;
+  --surface: #FFFFFF;
+  --sunken: #EFEBE1;
+  --fg: #242F28;
+  --fg-muted: #5B6B5F;
+  --accent: #36493C;
+  --border: rgba(36,47,40,0.14);
+  --error: #A24A2C;
+  --ok: #3C4E22;
+  --radius: 12px;
+  font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--fg); line-height: 1.5; }
+h1, h2 { font-weight: 600; letter-spacing: -0.01em; }
+h1 { font-size: 26px; margin: 0 0 8px; }
+h2 { font-size: 18px; margin: 32px 0 8px; }
+p { margin: 0 0 12px; color: var(--fg-muted); }
+.wrap { max-width: 820px; margin: 0 auto; padding: 24px 20px 80px; }
+
+.topbar {
+  display: flex; align-items: center; gap: 12px;
+  padding: 14px 20px; border-bottom: 1px solid var(--border); background: var(--surface);
+}
+.brand { font-weight: 600; }
+.phase-tag { font-size: 12px; color: var(--fg-muted); background: var(--sunken); padding: 4px 10px; border-radius: 999px; }
+.topbar .btn { margin-left: auto; }
+
+.stack { display: flex; flex-direction: column; gap: 10px; max-width: 480px; }
+label { font-size: 13px; font-weight: 500; }
+input[type="text"], input[type="url"], input[type="password"] {
+  padding: 10px 12px; border: 1px solid var(--border); border-radius: 8px; font-size: 15px; background: var(--surface); color: var(--fg);
+}
+
+.btn {
+  font-size: 14px; font-weight: 500; padding: 10px 16px; border-radius: 999px; border: none; cursor: pointer;
+}
+.btn-primary { background: var(--accent); color: var(--bg); }
+.btn-primary:disabled { opacity: 0.5; cursor: not-allowed; }
+.btn-ghost { background: transparent; color: var(--accent); box-shadow: inset 0 0 0 1px var(--border); }
+
+.error { color: var(--error); font-size: 13.5px; }
+.status-card { margin-top: 20px; padding: 14px 16px; border-radius: var(--radius); background: var(--sunken); }
+
+.card-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 12px; }
+.candidate-card {
+  background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 12px;
+  display: flex; flex-direction: column; gap: 8px;
+}
+.candidate-card.selected { outline: 2px solid var(--accent); }
+.candidate-card img { max-width: 100%; max-height: 90px; object-fit: contain; background: var(--sunken); border-radius: 6px; }
+.candidate-card .swatch { height: 56px; border-radius: 6px; border: 1px solid var(--border); }
+.candidate-card .meta-row { font-size: 12.5px; color: var(--fg-muted); display: flex; justify-content: space-between; }
+.candidate-card .confidence { font-size: 11.5px; color: var(--fg-muted); }
+
+.hint { font-size: 13px; }
+.callout { background: #FBE8DF; border-radius: var(--radius); padding: 14px 16px; margin: 16px 0; }
+.callout h2 { margin-top: 0; }
+.excerpt { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 14px; max-height: 220px; overflow-y: auto; font-size: 14px; }
+.file-list { list-style: none; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.file-list li { font-size: 13.5px; background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 8px 12px; display: flex; justify-content: space-between; gap: 8px; }
+.file-list a { color: var(--accent); }
+
+.actions { margin-top: 28px; display: flex; align-items: center; gap: 12px; }
+.brand-row { display: flex; justify-content: space-between; align-items: center; padding: 10px 0; border-bottom: 1px solid var(--border); }
+.brand-row .status { font-size: 12px; padding: 3px 9px; border-radius: 999px; background: var(--sunken); }
+.brand-row a { color: var(--accent); font-weight: 500; }
+
+@media (max-width: 480px) {
+  .wrap { padding: 16px 14px 60px; }
+  .card-grid { grid-template-columns: 1fr 1fr; }
+}

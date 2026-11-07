@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 480" role="img" aria-labelledby="t d">
+  <title id="t">Juniper Goods — product illustration stand-in</title>
+  <desc id="d">A flat SVG illustration of a trail pack, standing in for a product photograph. Real product photography has not been produced for this demo. This is an illustration, not a photo and not an AI image generation.</desc>
+  <rect width="640" height="480" fill="#F2ECDF"/>
+  <ellipse cx="320" cy="430" rx="190" ry="22" fill="#E4DBC6"/>
+  <g>
+    <rect x="210" y="120" width="220" height="260" rx="28" fill="#1F3A2E"/>
+    <rect x="232" y="150" width="176" height="150" rx="18" fill="#2B4536"/>
+    <rect x="252" y="90" width="136" height="60" rx="20" fill="#1F3A2E"/>
+    <rect x="300" y="70" width="40" height="40" rx="10" fill="none" stroke="#C97B4A" stroke-width="8"/>
+    <rect x="232" y="310" width="176" height="18" rx="9" fill="#C97B4A"/>
+    <rect x="232" y="336" width="176" height="18" rx="9" fill="#C97B4A"/>
+    <circle cx="320" cy="400" r="4" fill="#C97B4A"/>
+  </g>
+  <text x="320" y="450" text-anchor="middle" font-family="Arial, sans-serif" font-size="13" fill="#7C746C">Illustrative stand-in — real photography TODO</text>
+</svg>

@@ -1,0 +1,32 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 360" role="img" aria-labelledby="t d">
+  <title id="t">Juniper Goods — campaign loop (local SVG/CSS animation)</title>
+  <desc id="d">A locally rendered, looping SVG/CSS animation: a sun crossing a ridge line while the Juniper wordmark fades in. Not a video render and not an AI generation — a hand-built asset for this demo.</desc>
+  <style>
+    .sky { fill: #1F3A2E; }
+    .ridge-back { fill: #16281F; }
+    .ridge-front { fill: #10201A; }
+    .sun { fill: #C97B4A; animation: rise 6s ease-in-out infinite; transform-origin: 320px 260px; }
+    .word { fill: #F2ECDF; font-family: Georgia, 'Times New Roman', serif; font-size: 40px; font-weight: 700; text-anchor: middle; opacity: 0; animation: fadein 6s ease-in-out infinite; }
+    .tag { fill: #C97B4A; font-family: Arial, sans-serif; font-size: 14px; letter-spacing: 2px; text-anchor: middle; opacity: 0; animation: fadein 6s ease-in-out infinite; }
+    @keyframes rise {
+      0%   { transform: translateY(40px); }
+      50%  { transform: translateY(-10px); }
+      100% { transform: translateY(40px); }
+    }
+    @keyframes fadein {
+      0%, 100% { opacity: 0; }
+      35%, 65% { opacity: 1; }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      .sun, .word, .tag { animation: none; }
+      .sun { transform: translateY(0); }
+      .word, .tag { opacity: 1; }
+    }
+  </style>
+  <rect class="sky" width="640" height="360"/>
+  <circle class="sun" cx="320" cy="260" r="46"/>
+  <path class="ridge-back" d="M0 260 L120 180 L220 240 L340 160 L460 230 L560 190 L640 250 L640 360 L0 360 Z"/>
+  <path class="ridge-front" d="M0 300 L100 260 L240 310 L380 250 L520 300 L640 270 L640 360 L0 360 Z"/>
+  <text class="word" x="320" y="120">JUNIPER GOODS</text>
+  <text class="tag" x="320" y="150">MADE FOR THE TRAIL</text>
+</svg>
