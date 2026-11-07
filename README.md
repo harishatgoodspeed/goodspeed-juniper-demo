@@ -1,26 +1,27 @@
-# Goodspeed Brand OS
+# Goodspeed Brand OS — free tool
 
-Imports a real website's brand, drafts task briefs against it, renders real
-downloadable assets, reviews them against the brand (with a bounded
-auto-repair loop), and publishes a shareable, access-controlled result page.
+A public, free tool: paste a URL, approve a brand (palette, fonts, logo,
+voice), and get real on-brand LinkedIn/Instagram/X images plus a post
+caption, checked against your brand before you see them, plus a
+downloadable brand snapshot. No signup, no login, no email gate before
+download. Built on the same pipeline a private prototype used internally:
+import a real site, draft briefs against it, render real assets, review
+them against the brand with a bounded auto-repair loop, and publish a
+shareable, access-controlled result page.
 
-**Status: Phases 1–5 built and tested, now verified end to end with a real
-`ANTHROPIC_API_KEY` against a real site; Docker and deeper multi-instance
-rate limiting are not built.** The whole pipeline — import a real site →
-approve its brand → draft briefs with a real Anthropic call → render real
-PNG/PDF assets → review with real CIEDE2000 colour checks and repair on
-failure → publish a private-by-default result page the owner can share via
-a revocable link — has been run end to end against `https://goodspeed.studio`
-and produced real briefs, real rendered outputs, and genuine pass/fail
-review findings. What's missing is documented plainly below, not glossed
-over. **Nothing in this repo has been deployed.**
+**Status: working end to end, verified live against a real site with a real
+`ANTHROPIC_API_KEY`, not yet deployed.** Every visitor gets an isolated,
+anonymous workspace automatically — there is no login step and no shared
+access code any more. Daily spend caps (per-visitor and global, both
+PLACEHOLDER values) gate every run. **Nothing in this repo has been
+deployed.**
 
 ## Setup
 
 ```bash
 npm install
-npx playwright install chromium   # Phase 3 needs a real Chromium binary
-cp .env.example .env              # fill in APP_ACCESS_CODE and SESSION_SECRET at minimum
+npx playwright install chromium   # the renderer needs a real Chromium binary
+cp .env.example .env              # fill in SESSION_SECRET and ANTHROPIC_API_KEY at minimum
 npm run migrate
 npm run build
 npm start                          # or: npm run dev
@@ -32,11 +33,11 @@ Generate secrets:
 node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
 ```
 
-Open `http://localhost:3000`, sign in with `APP_ACCESS_CODE`, and paste a
-public site URL to import its brand. Briefs (Phase 2) need a real
-`ANTHROPIC_API_KEY` in `.env` — without one, the pipeline still runs exactly
-as far as it honestly can and then fails clearly on the brief step (see
-"Verified end to end" below), rather than faking a result.
+Open `http://localhost:3000` and paste a public site URL — a workspace is
+provisioned silently on first visit, nothing to sign in to. Brief
+generation and real copy/voice review need a real `ANTHROPIC_API_KEY` in
+`.env`; without one, a run still goes exactly as far as it honestly can and
+then fails clearly at the brief step, rather than faking a result.
 
 ## Tests
 
@@ -44,38 +45,63 @@ as far as it honestly can and then fails clearly on the brief step (see
 npm test
 ```
 
-100 tests, entirely offline, running under `node --env-file=.env.test`:
+167 tests, entirely offline, running under `node --env-file=.env.test`:
 SSRF checks spin up real local HTTP servers to prove loopback/metadata
-addresses are refused; Phase 3's tests launch a real headless Chromium and
-assert on real PNG/PDF bytes; Phase 4's deterministic wrong-palette-token
-fixture computes a real CIEDE2000 ΔE; Phase 5's tests prove anonymous access
-actually works for a valid share token and actually fails for a wrong one, a
-revoked one, or no token at all; two tests (added after the live run below)
-prove a colour/font check reports `not_applicable`, never a fabricated
-`pass`, when the renderer used its own internal fallback instead of an
-approved value. `npm test` still mocks the Anthropic client and the network
-import (no key or real network access needed to run it) — those are
-exercised against the real services manually, see below.
+addresses are refused; the renderer's tests launch a real headless Chromium
+and assert on real PNG/PDF bytes, real sampled pixel colours, and a real
+embedded font file actually loading; the logo-fidelity tests render a real
+reference image and prove a genuinely different asset scores low similarity,
+not just that presence was checked; the deterministic wrong-palette-token
+and mechanical-exclamation-point fixtures prove the repair loop fixes what
+it claims to and leaves everything else honestly unresolved; the sharing
+tests prove anonymous access actually works for a valid share token and
+actually fails for a wrong one, a revoked one, or no token at all. `npm
+test` mocks the Anthropic client (no key or real network access needed to
+run it) — real API usage is exercised manually against a live site, see
+below.
 
-## The pipeline
+## The free journey
 
 ```
+GET /                          → paste a URL, no account
+
 POST /api/brands {url}
+  → anonymous workspace auto-provisioned (no login) on first request
   → "import" job: SSRF-safe fetch, extraction, asset download+sanitise
-  → owner approves logo/colours/fonts via PATCH /api/brands/:id
+  → approve logo/colours/fonts/voice via PATCH /api/brands/:id
+
+GET /api/brands/:id/snapshot.md
+  → a Claude-ready brand.md: approved palette/fonts/voice, zero contact
+
+POST /api/brands/:id/check-upload {mimeType, imageBase64}
+  → "check this against our brand": real pixel sampling, real CIEDE2000
+    distance from each approved colour, colour only (see Known limitations)
 
 POST /api/brands/:id/runs {task}
-  → "brief" job: Anthropic drafts 4 briefs, every colour/font/asset
-    reference independently re-validated against the approved context
-  → (on success) "generate" job: for each brief, Playwright renders a real
-    PNG/PDF, then reviews it (CIEDE2000 colour, typography, logo presence,
-    copy) and repairs an actionable colour failure by re-rendering, up to
-    2 attempts
-  → run status becomes "completed" (all outputs passed) or "partial"
+  → daily spend caps (per-visitor + global) checked first
+  → "brief" job: Anthropic drafts one brief per output type — LinkedIn
+    image, X image, Instagram image, post copy, one-pager, slide — every
+    colour/font/asset reference independently re-validated against the
+    approved context, UK/US spelling matched to the brand's own site
+  → (on success) "generate" job: Playwright renders each brief to a real
+    file, reviews it (CIEDE2000 colour, typography against a real embedded
+    font file, logo presence AND pixel-fidelity against a reference render,
+    real AI copy/voice assessment) and repairs a deterministic failure
+    (wrong palette hex, the mechanical "no exclamation points" rule) by
+    re-rendering, up to 2 attempts
+  → run status becomes "completed" (every output passed) or "partial"
     (something stayed unresolved after repair — never silently hidden)
 
-GET /api/runs/:id          → run + every output + every review's findings
-GET /api/outputs/:id/file  → the rendered PNG/PDF, ownership-checked
+GET /api/runs/:id          → run + every output + its honest label
+                              (Draft / Brand approved / Needs review) +
+                              every review's findings
+GET /api/outputs/:id/file  → the rendered file, full resolution, no
+                              watermark, ownership-checked
+
+POST /api/brands/:id/leads  → optional, post-delivery: email, preferred
+                               tool, notes, explicit consent — notifies
+                               Slack if SLACK_WEBHOOK_URL is set, never
+                               required to use anything above
 
 POST /api/brands/:id/share           → owner enables sharing; the raw token
                                         is returned once and never again
@@ -85,246 +111,251 @@ GET /b/:id[?token=...]               → the result page: owner session or a
                                         valid share token, nothing else
 ```
 
-### Verified end to end (manually, not part of `npm test`)
+### Verified end to end (manually, with a real `ANTHROPIC_API_KEY`)
 
-**Without an `ANTHROPIC_API_KEY`**: imported `https://goodspeed.studio`
-(status `ready`, zero unknowns, its real palette and font stack extracted,
-real logo/og-image/favicon downloaded and sanitised), created a run, and
-watched it fail cleanly at the brief step with `"ANTHROPIC_API_KEY is not
-configured — set it in .env to generate real briefs."` — the run's status
-became `failed` and the job recorded that exact error. No pretend briefs, no
-fake output.
+Imported `https://goodspeed.studio`, approved a real logo + real colours +
+real fonts + voice guidance, generated posts, and confirmed live: voice
+notes save and restore, the brand snapshot downloads with the real approved
+values, the upload-check returns real per-colour matches against a
+synthetic test image, and a full run renders real LinkedIn/X/Instagram
+images plus a post caption, a one-pager, and a slide — all through the
+grouped free-journey UI, with working Draft/Brand approved/Needs review
+labels, the "More formats" disclosure, the upsell panel, and the lead form.
 
-**With a real `ANTHROPIC_API_KEY`**: the same brand, with a real logo + 3
-real colours + 2 real fonts approved, ran a real end-to-end run —
-`generateBriefs` made a real call to Claude Sonnet 5.5, Playwright rendered
-real PNG/PDF files for all 4 output types, and `reviewOutput` produced real
-findings:
+Several real bugs were found and fixed along the way, not by `npm test`:
 
-- Colour checks genuinely **passed** (real CIEDE2000 ΔE 0.00) against the
-  actual approved hexes.
-- Typography checks genuinely **failed** — the approved fonts (proprietary
-  webfonts) have no local `@font-face` file available to the
-  network-isolated renderer, so the browser truthfully fell back to Georgia
-  /Arial and the review reported that fallback as a failure rather than
-  masking it. Loading approved custom webfonts into the renderer is real,
-  not-yet-built work (see Known limitations).
-- The logo check reported `not_verified` (no render evidence yet wired for
-  that asset) and the copy check `not_verified` (Phase 2+ AI assessment
-  still a stub) — both honest, neither a fabricated pass.
-
-Two real bugs were found and fixed by this live run, not by `npm test`:
-
-1. **Forced tool use is a 400 on Claude Sonnet 5.5.** `generateBriefs` used
-   `tool_choice: {type: "tool", name: ...}` to force structured JSON out of
-   the model — a pattern this model's API rejects outright
-   (`tool_choice: type "tool" and "any" are not supported for this model`).
-   Fixed by switching to `client.messages.parse()` with
-   `output_config.format: zodOutputFormat(...)` (the SDK's own recommended
-   replacement for "forced tool call that only existed to get JSON back"),
-   keeping an explicit `BriefsToolInput.safeParse` re-validation afterwards
-   so a misbehaving or mocked client still can't skip it.
-2. **Colour/typography review could report a tautological "pass".** When no
-   colour or font was approved for a role, the renderer (by design) falls
-   back to an internal neutral default (`templates.ts`'s `DEFAULT_PALETTE`,
-   or Georgia/Arial) so it can still render something. The review then
-   sampled the rendered pixels and compared them against that *same*
-   internal default — guaranteed to match, since nothing else drove the
-   render — and reported "pass... matches the approved colour" even though
-   nothing had actually been approved. `RenderRegion`/`FontCheckEvidence`
-   now carry an `expectedHexApproved`/`expectedFamilyApproved` flag set by
-   the template that built them; `reviewOutput` reports `not_applicable`
-   instead of a fabricated pass whenever that flag is false.
+1. **Forced tool use is a 400 on Claude Sonnet 5.5.** Fixed by switching to
+   `client.messages.parse()` with `output_config.format: zodOutputFormat(...)`,
+   keeping an explicit `safeParse` re-validation afterwards so a misbehaving
+   or mocked client still can't skip it.
+2. **Colour/typography review could report a tautological "pass"** against
+   the renderer's own internal fallback default when nothing had actually
+   been approved. Fixed with an `expectedHexApproved`/`expectedFamilyApproved`
+   flag that forces `not_applicable` instead of a fabricated pass.
+3. **Logos and supporting images never actually rendered, in any output,
+   ever.** Chromium refuses to load a local `file://` image from a document
+   built via `page.setContent()` (no `file://` origin of its own) — it fails
+   silently, no error, no exception, and the old logo check only verified a
+   non-empty CSS bounding box, which every template sets inline regardless
+   of whether the image decoded. Fixed at the root: the renderer now writes
+   the template to a real temp file and navigates to it (`page.goto`)
+   instead, giving the document a genuine `file://` origin. Caught only
+   because the new logo-fidelity check's `naturalWidth`/`naturalHeight`
+   assertion failed in a real Playwright test — not by any prior check.
+4. **The new Instagram/X output types would have failed a database
+   constraint** the first time a real run tried to use them — the original
+   schema's `CHECK (type IN (...))` on `outputs.type` still named only the
+   original four types. Fixed with a migration that rebuilds the table
+   (SQLite can't alter a CHECK constraint in place) and a test that actually
+   inserts all six types against a real migrated schema.
 
 ## What's implemented
 
-- **Import (Phase 1)**: fetch exactly one HTML page plus up to 10 linked
-  stylesheets (25 MB / 30 s budget total), under full SSRF protection —
-  hostname and every redirect target are freshly resolved and checked against
-  disallowed IP ranges, and the connection is made to the validated IP
-  literal (never the hostname again) to close the DNS-rebinding window.
-  `robots.txt` is checked before fetching. Logo candidates (favicon,
-  og:image, header `<img>`/`<svg>`, deduplicated), colour declarations
-  (counted by how many declarations used them, not a visual-prominence
-  claim), CSS custom properties, fonts, and a bounded readable-copy excerpt
-  are extracted with every gap recorded as an explicit "unknown". Up to 5
-  logo-ish candidates are downloaded, MIME/size-validated, and SVGs sanitised.
-- **Briefs (Phase 2)**: `POST /api/brands/:id/runs` drafts 4 coordinated
-  briefs (LinkedIn image, one-pager, slide, post copy) via the Anthropic SDK
-  using forced tool-use for structured output, Zod-validated, and then —
-  independently of the model's own output — every `paletteTokenHexes` hex,
-  `fontFamilies` entry, and `logoAssetId` is checked against what was
-  actually approved; any invented reference is rejected, not trusted. Real
-  token usage and elapsed time (`process.hrtime.bigint()`) are recorded.
-- **Rendering (Phase 3)**: Playwright renders each brief to a real asset in
-  an isolated, network-blocked browser context (only `file:`/`data:`
-  requests are allowed through) — a LinkedIn PNG (1200×627), a one-pager PDF
-  (A4), a slide PNG (1280×720); post copy is just the brief's text, no
-  render needed. Captures real evidence: computed font families (via a
-  canvas measurement, since headless Chromium's `document.fonts.check()`
-  reports `true` for fonts that were never loaded — verified empirically),
-  logo bounding-box presence, and overflow.
-- **Review & repair (Phase 4)**: real CIEDE2000 colour distance (via
-  `culori`) between a sampled rendered region (interior pixels only, edges
-  excluded to dodge antialiasing) and the approved hex; typography/logo
-  checks that say `not_verified` rather than guessing `pass` when evidence is
-  missing; a bounded (2-attempt) repair loop that corrects a wrong palette
-  hex and re-renders — proven with a fixture that generates two real PNGs,
-  shows a real ΔE-based failure, a real repair, and a real pass, plus a
-  separate case that stays `unresolved` rather than ever producing a false
-  pass.
-- **Auth**: a single shared `APP_ACCESS_CODE` gates the whole app (this is a
-  private prototype, not multi-tenant signup); signed, HttpOnly session
-  cookies; CSRF via double-submit cookie; failed-login rate limiting.
+- **Anonymous per-visitor workspaces.** No login, no access code: a new
+  session silently provisions an isolated owner on first request
+  (`attachSession`), rate-limited (20 new workspaces/hour/IP) so this can't
+  be used to spin up unlimited free workspaces. "Start over" abandons the
+  current one; the next request gets a brand-new one.
+- **Daily spend caps.** `PER_VISITOR_DAILY_SPEND_USD` and
+  `GLOBAL_DAILY_SPEND_USD` (both PLACEHOLDER) are checked before every run,
+  estimated from real token usage at Claude Sonnet 5.5 list pricing
+  (`estimateUsdCost`).
+- **Import**: fetch exactly one HTML page plus up to 10 linked stylesheets
+  (25 MB / 30 s budget total), under full SSRF protection — hostname and
+  every redirect target are freshly resolved and checked against disallowed
+  IP ranges, and the connection is made to the validated IP literal (never
+  the hostname again) to close the DNS-rebinding window. `robots.txt` is
+  checked before fetching. Logo candidates, colour declarations, CSS custom
+  properties, fonts, and a bounded readable-copy excerpt are extracted with
+  every gap recorded as an explicit "unknown".
+- **Approval, including voice.** One logo, a colour list, a font list, and
+  freeform voice guidance (`PATCH /api/brands/:id`) — each `setApprovedContext`
+  call bumps `approved_context_version`, which drives the brand-versioning
+  labels below.
+- **Six coordinated output types per run**: `linkedin_image` (1200×627),
+  `x_image` (1200×675, the same two-column layout), `instagram_image`
+  (1080×1080, centred/stacked), `one_pager_pdf` (A4), `slide` (1280×720),
+  and `post_copy`. Briefs are drafted via the Anthropic SDK with structured
+  output, Zod-validated, then every `paletteTokenHexes`/`fontFamilies`/
+  `logoAssetId` reference is independently re-checked against what was
+  actually approved — an invented reference is rejected, not trusted.
+  UK/US spelling is matched to the brand's own extracted copy
+  (`detectEnglishVariant`), defaulting honestly to British English when no
+  decisive signal is found.
+- **Real font embedding.** Approved fonts are resolved to a real,
+  downloadable file (a direct `@font-face` URL captured at import time, or
+  the brand's own Google Fonts link) and embedded as a `data:` URI
+  `@font-face` in the render — through the same SSRF-guarded fetch used for
+  logos/images. A font with no real file behind it still fails typography
+  review honestly; nothing is fabricated.
+- **Real logo fidelity, beyond presence.** The logo check now requires the
+  image to have actually decoded (`naturalWidth`/`naturalHeight` > 0, not
+  just a non-empty CSS box) and visually match an independent reference
+  render of the same approved file, compared pixel-for-pixel
+  (`src/generate/logo-fidelity.ts`) — catching a wrong, substituted, or
+  corrupted asset that still happens to decode.
+- **Real AI copy/voice review**, not a stub: `assessCopy` checks generated
+  copy's facts against only what was sourced and its voice against the
+  approved guidance, via a real Anthropic call (dependency-injected for
+  tests). A `not_verified` copy check now blocks `overallPass` by default
+  (`requireCopyVerified`), same as any other unverified check.
+- **A repair loop that fixes two real, deterministic failure modes**: a
+  wrong palette hex (swap for the approved one and re-render) and the
+  mechanical "no exclamation points" copy rule (strip it, no LLM call, no
+  extra spend). Everything else the model actually had to judge — an
+  invented claim, a voice mismatch, typography, logo fidelity — is left
+  honestly unresolved rather than silently retried.
+- **Honest, no-opaque-score labelling tied to brand versioning.** Every
+  output is "Brand approved" only when every applicable check genuinely
+  passed, "Draft" otherwise, or "Needs review" the moment the brand's
+  approved context has moved on since that output was generated
+  (`run.context_version !== brand.approved_context_version`).
+- **Brand snapshot download** (`GET /api/brands/:id/snapshot.md`): a
+  Claude-ready `brand.md` with the approved palette/fonts/voice and what was
+  actually extracted about the brand, nothing invented, free, no email.
+- **Upload-and-check, colour only.** `POST /api/brands/:id/check-upload`
+  decodes a real uploaded image (any format a browser can decode — PNG,
+  JPEG, WebP, GIF, via a real Chromium canvas, no new dependency), samples
+  its real pixels, and reports a genuine CIEDE2000 distance from each
+  approved colour to its closest real pixel. Deliberately never claims to
+  check fonts or logo fidelity in an upload — see Known limitations.
+- **Upsell panel and optional lead capture.** Shown only after a run
+  completes or goes partial: a three-tier CTA (free starter, built into
+  your tools, ongoing upkeep — no prices) linking to
+  `https://goodspeed.studio/contact`, and an optional email-capture form
+  (email, preferred tool, notes, explicit consent) that notifies
+  `SLACK_WEBHOOK_URL` if configured and never blocks the lead being stored
+  if Slack is down.
 - **Jobs**: a persistent SQLite queue with a bounded-concurrency worker
-  (`MAX_CONCURRENT_JOBS`, default 2 — matches "two active workers globally").
-  Each phase enqueues the next on success (`import` has no next step defined
-  yet beyond readiness; `brief` → `generate`, which does review+repair
-  inline — see "Known limitations").
-- **Rate limits**: 5 imports/hour and 3 runs/hour per owner+IP,
-  `DAILY_RUN_LIMIT` (default 20) runs per rolling 24h globally, and one
-  active run per owner at a time.
-- **Static serving**: the app's own frontend is served through a small
-  from-scratch static file handler with correct MIME types, GET/HEAD, path-
-  traversal protection, and a plain 404 for anything missing.
-- **Sharing & the result page (Phase 5)**: `GET /b/:id` is a server-rendered
-  page (the original task prompt, the approved brand, the briefs, every
-  output with its preview/download, and its full review findings table),
+  (`MAX_CONCURRENT_JOBS`, default 2). Each phase enqueues the next on
+  success (`import` → ready; `brief` → `generate`, which does render+review
+  inline — see Known limitations).
+- **Rate limits**: 5 imports/hour, 3 runs/hour, 10 upload-checks/hour, and
+  5 lead submissions/hour, all per owner; 20 new workspaces/hour per IP;
+  `DAILY_RUN_LIMIT` (default 20) runs per rolling 24h globally, on top of
+  the spend caps; one active run per owner at a time.
+- **Static serving**: the app's own frontend is served through a
+  from-scratch static file handler with correct MIME types, GET/HEAD,
+  path-traversal protection, and a plain 404 for anything missing.
+- **Sharing & the result page**: `GET /b/:id` is a server-rendered page
+  (the task, the approved brand, the briefs, every output with its
+  preview/download and honest label, its full review findings table),
   private by default — it checks the owner's session or a valid share token
-  and 404s identically for "wrong token" and "brand doesn't exist" (existence
-  is never confirmed to someone without access). `POST /api/brands/:id/share`
-  creates a high-entropy (256-bit) capability token; only its SHA-256 hash is
-  ever stored, so the raw token is shown exactly once, the same way an API
-  key would be. `DELETE /api/brands/:id/share/:shareId` revokes it
-  immediately. Asset and output downloads (`/api/assets/:id`,
-  `/api/outputs/:id/file`) accept the same token for anonymous viewers.
-  `X-Robots-Tag: noindex, nofollow` is set on the page. Mobile-responsive,
-  keyboard-operable (native `<details>`/`<summary>` disclosures, no custom
-  JS dialogs to manage focus for), alt text on the logo image,
-  `prefers-reduced-motion` respected (the page uses essentially no motion),
-  British English and sentence case throughout.
-- **`MAX_RUN_TOKENS`** is now passed to the Anthropic call as `max_tokens`,
-  making it a real cap rather than a parsed-but-unused value.
+  and 404s identically for "wrong token" and "brand doesn't exist"
+  (existence is never confirmed to someone without access). Share tokens
+  are high-entropy (256-bit); only their SHA-256 hash is ever stored, so the
+  raw token is shown exactly once. `X-Robots-Tag: noindex, nofollow` is set
+  on the page.
 
 ## What's NOT built yet
 
-- **Deletion** exists for brands (`DELETE /api/brands/:id`, which also
-  cascades to its shares); there's no retention-cleanup job yet
+- **Fonts/logo fidelity in an upload check.** `check-upload` is colour only,
+  deliberately (see Known limitations) — it has no font or logo detection.
+- **Deletion** exists for brands (`DELETE /api/brands/:id`, which cascades
+  to its shares/leads); there's no retention-cleanup job yet
   (`RETENTION_DAYS` is parsed, not enforced).
 - **Docker** — this dev machine has no local Docker to build/test an image
   against, so none was written speculatively.
 - **Share expiry** — `shares.expires_at` exists in the schema and
   `isValidShareToken` already honours it, but nothing in the API sets an
   expiry yet; a share is revocable but doesn't currently expire on its own.
-- **The wider security test suite** the full spec calls for (redirect/
-  subresource SSRF, ownership/IDOR, and share access control are all covered;
-  broader fuzzing, a CI pipeline with mocked paid APIs, etc. is not).
-- **Rate limiting still doesn't coordinate across multiple instances** (see
-  "Known limitations" — unchanged by Phase 5, since share creation/revocation
-  are owner actions, not currently rate-limited at all beyond requiring a
-  valid session and CSRF token).
+- **Rate limiting still doesn't coordinate across multiple instances** — it's
+  in-process memory, resets on restart.
+- **A CI pipeline with mocked paid APIs, broader fuzzing, etc.** is not set up.
 
 ## Known limitations (disclosed, not hidden)
 
+- **The upload-check is colour only.** Identifying a typeface or logo from
+  an arbitrary rasterised upload (a screenshot, an exported design, a photo)
+  isn't something this project can do reliably, and claiming to would be
+  exactly the kind of fabricated capability this codebase otherwise refuses
+  to ship. `UPLOAD_COLOUR_MATCH_THRESHOLD` (default 12 ΔE) is deliberately
+  more lenient than the render-review threshold, since an upload may be a
+  photo or re-compressed export this project doesn't control the exactness of.
+- **The free journey generates one brief per output type (6), not "3-5
+  variations of one type."** The six types (LinkedIn/X/Instagram images,
+  post copy, one-pager, slide) are deliberately varied rather than
+  near-duplicates of the same platform — the one-pager and slide are
+  collapsed behind a "More formats" disclosure in the UI per the brief's
+  "keep behind the scenes" instruction, but they're still generated,
+  reviewed, and spend-capped the same as everything else.
 - **Render + review share one job phase.** The `jobs` table's schema already
-  allows a separate `"review"` phase, but `RenderEvidence` (pixel regions,
-  font-check evidence, logo bounding box) has no column to persist it in
-  the Phase 1 schema — serialising it would mean a new migration. Rather than
-  invent that storage mid-integration, `run-generate-job.ts` renders *and*
-  reviews each output in one job, immediately. A follow-up could split them
-  once `RenderEvidence` has somewhere real to live between jobs.
-- **`outputs.file_id` stores an absolute local path directly**, not a foreign
-  key into a dedicated files table (none exists in the Phase 1 schema).
-  Access is still ownership-checked through `GET /api/outputs/:id/file`,
-  never served as a static path — but this is a simplification worth
-  revisiting if outputs need to move between machines/storage backends.
-- **The copy review check is a stub.** A real AI voice/fact assessment
-  against the brief's sourced copy (Phase 2+ work) isn't wired in — it
-  reports `not_verified` with one real mechanical sub-check (the seeded
-  "no exclamation points" voice rule). `reviewOutput`'s `requireCopyVerified`
-  option defaults to `false` so this doesn't block every run's
-  `overallPass`; flip it once a real assessment exists.
-- **No approved "image assets" concept yet.** The approval flow only
-  supports one logo + a colour list + a font list (see `PATCH
-  /api/brands/:id`). Phase 2's brief generator enforces this honestly: a
-  brief with any `imageAssetIds` is rejected outright, rather than trusting
-  an unapproved reference.
+  allows a separate `"review"` phase, but `RenderEvidence` has no column to
+  persist it between jobs in the current schema — serialising it would mean
+  a new migration. `run-generate-job.ts` renders *and* reviews each output
+  in one job, immediately, rather than inventing that storage mid-integration.
+- **`outputs.file_id` stores an absolute local path directly**, not a
+  foreign key into a dedicated files table. Access is still
+  ownership-checked through `GET /api/outputs/:id/file`, never served as a
+  static path — but this is a simplification worth revisiting if outputs
+  need to move between machines/storage backends.
 - **`paletteTokenHexes`/`fontFamilies` have a positional convention**
-  ([background, primary, text, accent] / [heading, body]) that Phase 2's
-  prompt now tells the model about, and Phase 3's renderer assumes. It's
-  documented in both files' comments, not enforced by the type system.
+  ([background, primary, text, accent] / [heading, body]) that the brief
+  prompt tells the model about and the renderer assumes. It's documented in
+  both files' comments, not enforced by the type system.
 - **Re-rendering during repair launches a fresh Chromium process per
   attempt** (correct per the "fresh isolated context" requirement, slower
-  than reusing one browser — a deliberate trade-off, not an oversight).
-- **Single shared owner.** `APP_ACCESS_CODE` is one code for one operator;
-  every login resolves to the same `owner_default` row. The schema models
-  `owner_id` everywhere so real multi-user support is additive, not a rewrite.
+  than reusing one browser — a deliberate trade-off, not an oversight). The
+  same is true of the logo-fidelity reference render and the upload-check
+  decode: each spins up its own isolated browser/context rather than
+  sharing one across a request, for the same reason.
+- **Font/logo-reference fetches have no persistent cache.** Real font files
+  and the logo-fidelity reference render are fetched/rendered fresh per run
+  (fonts) or per logo check (reference render), not cached to disk across
+  runs — correct and safe, but means repeat runs for the same brand refetch
+  the same font files.
 - **Rate limiting is in-process memory.** Resets on restart; does not
   coordinate across multiple instances.
 - **CSS extraction doesn't resolve `var()`.** A declaration driven entirely
   by a custom property is left unextracted rather than guessed at.
 - **`robots.txt` parsing is minimal** — exact-prefix `Disallow`/`Allow` only.
-- **SVG sanitisation is conservative, not exhaustive** — adequate for a
-  private prototype, not a substitute for a maintained sanitiser at wider
+- **SVG sanitisation is conservative, not exhaustive** — adequate for a free
+  tool at this stage, not a substitute for a maintained sanitiser at wider
   exposure.
 - **Named CSS colours aren't counted** (e.g. `tomato`) — only hex and
   `rgb()`/`rgba()`.
-- **Approved custom webfonts aren't actually loaded into the renderer.**
-  `buildTemplate` writes the approved font-family name into the CSS, but no
-  `@font-face` file is fetched or embedded for it, and the renderer blocks
-  all network requests (by design — see Phase 3's `installNetworkGuard`).
-  For a brand like Goodspeed whose real fonts (Acid Grotesk, Lexend Deca)
-  are proprietary webfonts, this means typography review will honestly
-  **fail** every real run, falling back to Georgia/Arial, until the
-  approved font files are downloaded/embedded the same way the logo asset
-  already is.
-- **Two real bugs caught only by a live run with a real `ANTHROPIC_API_KEY`,
-  not by `npm test`** (see "Verified end to end" above for detail): forced
-  `tool_choice` is a 400 on Claude Sonnet 5.5 (fixed via `messages.parse` +
-  `output_config.format`), and the colour/typography review could report a
-  tautological "pass" against the renderer's own internal fallback palette
-  when nothing was actually approved (fixed with an
-  `expectedHexApproved`/`expectedFamilyApproved` flag that forces
-  `not_applicable` instead).
-- **A real bug caught by manual browser testing, not `npm test`**:
-  `share-page.ts` initially built the logo `<img src>` as
-  `/api/assets/:id/file`, copying the outputs route's `/file` suffix onto the
-  assets route, which doesn't have one (`GET /api/assets/:id`). Automated
-  tests had covered token-gated access to both routes directly, but nothing
-  rendered the actual page HTML and then fetched the URL it produced — so a
-  broken image on the real page went unnoticed until a live check in a
-  browser. Fixed, and a regression test (`tests/share-page-api.test.ts`,
-  "the rendered /b/:id page's logo <img src> actually resolves") now fetches
-  the real `<img src>` the page renders, not just the route in isolation.
 
 ## Environment variables
 
 See `.env.example` for the full list with descriptions. All of `PORT`,
-`NODE_ENV`, `APP_BASE_URL`, `DATABASE_PATH`, `ASSET_DIR`, `APP_ACCESS_CODE`,
-`SESSION_SECRET`, `ANTHROPIC_API_KEY`, `ANTHROPIC_MODEL`,
-`MAX_CONCURRENT_JOBS`, `DAILY_RUN_LIMIT`, `MAX_RUN_TOKENS`,
-`COLOUR_DELTA_E_THRESHOLD`, and `RETENTION_DAYS` are read in `src/config.ts`.
+`NODE_ENV`, `APP_BASE_URL`, `DATABASE_PATH`, `ASSET_DIR`, `SESSION_SECRET`,
+`ANTHROPIC_API_KEY`, `ANTHROPIC_MODEL`, `MAX_CONCURRENT_JOBS`,
+`DAILY_RUN_LIMIT`, `MAX_RUN_TOKENS`, `COLOUR_DELTA_E_THRESHOLD`,
+`LOGO_SIMILARITY_THRESHOLD`, `UPLOAD_COLOUR_MATCH_THRESHOLD`,
+`RETENTION_DAYS`, `PER_VISITOR_DAILY_SPEND_USD`, `GLOBAL_DAILY_SPEND_USD`,
+and `SLACK_WEBHOOK_URL` are read in `src/config.ts`.
 
 ## Project layout
 
 ```
 src/
   config.ts, pipeline-types.ts   env parsing; shared Brief/RenderEvidence/
-                                  ReviewResult contracts between phases 2-4
+                                  ReviewResult contracts across the pipeline
   db.ts, migrate.ts               SQLite connection + migration runner
-  ids.ts, brands.ts, runs.ts, outputs.ts, shares.ts   DB repositories
+  ids.ts, brands.ts, runs.ts, outputs.ts, shares.ts, leads.ts   DB repositories
   jobs.ts                         persistent job queue + bounded worker
   llm.ts                          Anthropic brief generation + reference validation
+  english-variant.ts              UK/US spelling detection for generated copy
+  snapshot.ts                     the free-tool brand.md builder
+  slack.ts                        lead-capture Slack webhook notifier
   share-page.ts                   server-rendered /b/:id HTML
   static-files.ts                 from-scratch static file serving
-  security/        url.ts (SSRF), session.ts, auth-middleware.ts, cookies.ts, csrf.ts, rate-limit.ts, brand-access.ts (owner-or-share-token check)
-  import/           fetch.ts, robots.ts, extract.ts, assets.ts, svg-sanitize.ts, run-import-job.ts
-  generate/          templates.ts, render.ts  (Playwright rendering)
-  review/            colour.ts (CIEDE2000), review.ts, repair.ts
-  jobs/              run-brief-job.ts, run-generate-job.ts
-  server.ts          Express app + routes
-migrations/0001_init.sql   full schema
-public/                     the app's own frontend: sign in, import/approve,
-                             start a run, enable/revoke sharing (vanilla HTML/CSS/JS)
-tests/                      98 node:test tests (see "Tests" above)
+  security/   url.ts (SSRF), session.ts, auth-middleware.ts (anonymous
+              workspace provisioning), cookies.ts, csrf.ts, rate-limit.ts,
+              brand-access.ts (owner-or-share-token check)
+  import/     fetch.ts, robots.ts, extract.ts, assets.ts, svg-sanitize.ts,
+              run-import-job.ts
+  generate/   templates.ts, render.ts, font-assets.ts (real font-file
+              embedding), logo-fidelity.ts (reference-render comparison),
+              network-guard.ts (shared file://-only Playwright guard)
+  review/     colour.ts (CIEDE2000), review.ts, repair.ts,
+              copy-assessment.ts (real AI copy/voice check),
+              upload-check.ts (free-tool colour-only upload review)
+  jobs/       run-brief-job.ts, run-generate-job.ts
+  server.ts   Express app + routes
+migrations/   0001_init.sql (full schema), 0002 (adds instagram_image/
+              x_image to outputs.type), 0003 (leads table)
+public/       the app's own frontend: import/approve/voice, generate posts,
+              upload-check, sharing, upsell + lead capture (vanilla HTML/CSS/JS)
+tests/        167 node:test tests (see "Tests" above)
 ```

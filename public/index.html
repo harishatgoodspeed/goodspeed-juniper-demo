@@ -9,25 +9,14 @@
 <body>
   <header class="topbar">
     <span class="brand">Goodspeed Brand OS</span>
-    <span class="phase-tag">Private prototype</span>
-    <button id="logoutBtn" class="btn btn-ghost" hidden>Sign out</button>
+    <span class="phase-tag">Free tool</span>
+    <button id="logoutBtn" class="btn btn-ghost">Start over</button>
   </header>
 
   <main id="app" class="wrap">
-    <section id="loginView" hidden>
-      <h1>Sign in</h1>
-      <p>This is a private prototype. Enter the access code to continue.</p>
-      <form id="loginForm" class="stack">
-        <label for="accessCode">Access code</label>
-        <input id="accessCode" name="code" type="password" autocomplete="current-password" required>
-        <button type="submit" class="btn btn-primary">Sign in</button>
-        <p id="loginError" class="error" role="alert" hidden></p>
-      </form>
-    </section>
-
     <section id="importView" hidden>
-      <h1>Import a brand</h1>
-      <p>Paste a public website address. We fetch the page and its stylesheets only, extract a candidate palette, type and logo, and show you exactly where each fact came from before anything is used.</p>
+      <h1>Paste your URL. Get on-brand posts, already checked.</h1>
+      <p>We fetch your site's own palette, type and logo, you approve what to use, and we draft real LinkedIn posts, checked against your brand before you see them. No account, no agent setup.</p>
       <form id="importForm" class="stack">
         <label for="siteUrl">Website address</label>
         <input id="siteUrl" name="url" type="url" placeholder="https://example.com" required>
@@ -69,23 +58,37 @@
       <h2>Source files</h2>
       <ul id="sourceAssets" class="file-list"></ul>
 
+      <h2>Voice</h2>
+      <p class="hint">How should your copy sound? Leave this blank and we will keep it plain and confident, with no exclamation points.</p>
+      <textarea id="voiceNotes" rows="3" placeholder="e.g. Confident, no exclamation points, short sentences."></textarea>
+
       <div class="actions">
         <button id="approveBtn" class="btn btn-primary">Save approved selection</button>
         <p id="approveStatus" aria-live="polite"></p>
       </div>
+      <p class="hint"><a id="snapshotLink" href="#" target="_blank" rel="noopener">Download your brand snapshot (brand.md)</a>. A Claude ready file with your approved palette, fonts and voice, free, no email required.</p>
 
-      <h2>Start a run</h2>
-      <p class="hint">Needs an approved selection saved above first.</p>
+      <h2>Get your on-brand posts</h2>
+      <p class="hint">Needs an approved selection saved above first. We will draft LinkedIn, Instagram and X images plus a post caption, checked against your brand before you see them.</p>
       <form id="runForm" class="stack">
-        <label for="runTask">What should this run produce</label>
+        <label for="runTask">What should these posts be about</label>
         <input id="runTask" name="task" type="text" placeholder="Launch announcement for the new collection" required>
-        <button type="submit" class="btn btn-primary">Start run</button>
+        <button type="submit" class="btn btn-primary">Generate posts</button>
         <p id="runError" class="error" role="alert" hidden></p>
       </form>
       <div id="runStatus" class="status-card" hidden>
         <p id="runStatusText" aria-live="polite"></p>
       </div>
       <div id="runResult"></div>
+
+      <h2>Check an existing design against your brand</h2>
+      <p class="hint">Upload an image (PNG, JPEG, WebP or GIF) and we will check its colours against your approved palette. Colour only for now, not fonts or logo fidelity.</p>
+      <form id="uploadCheckForm" class="stack">
+        <input id="uploadCheckFile" name="file" type="file" accept="image/png,image/jpeg,image/webp,image/gif" required>
+        <button type="submit" class="btn btn-primary">Check against our brand</button>
+        <p id="uploadCheckError" class="error" role="alert" hidden></p>
+      </form>
+      <div id="uploadCheckResult"></div>
 
       <h2>Sharing</h2>
       <p class="hint">Results are private until you enable a link. Anyone with an enabled link can view the result page and download its outputs.</p>

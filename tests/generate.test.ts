@@ -76,6 +76,16 @@ test("linkedin_image renders a real PNG at the template's declared resolution", 
   assert.ok(evidence.logoCheck);
   assert.equal(evidence.logoCheck?.rendered, true);
   assert.equal(evidence.logoCheck?.boundingBoxNonEmpty, true);
+  // Real fidelity, beyond presence: the browser actually decoded image data,
+  // and an independent reference render of the same file matches almost
+  // exactly (same file/engine/box — only true if the pipeline genuinely
+  // re-renders and compares, not a fabricated score).
+  assert.ok((evidence.logoCheck?.naturalWidth ?? 0) > 0, "logo must have actually decoded real image data");
+  assert.ok((evidence.logoCheck?.naturalHeight ?? 0) > 0);
+  assert.ok(
+    (evidence.logoCheck?.similarity ?? 0) > 0.95,
+    `expected near-identical pixel similarity against the reference render, got ${evidence.logoCheck?.similarity}`
+  );
 
   // Real font checks: one per role, read back from the rendered DOM.
   const roles = evidence.fontChecks.map((f) => f.role).sort();
@@ -118,6 +128,44 @@ test("a region's sampled colour matches the expectedHex declared for it in the t
         `region "${region.label}" at (${x},${y}) expected ${region.expectedHex}, got ${observed}`
       );
     }
+  }
+});
+
+test("x_image renders a real PNG at 1200x675 with every declared region matching its expectedHex", async () => {
+  const outDir = tmpOutDir();
+  const brief = makeBrief({ outputType: "x_image" });
+  const evidence = await renderOutput(brief, { logoPath: LOGO_PATH, imagePaths: [] }, outDir);
+
+  assert.equal(evidence.width, 1200);
+  assert.equal(evidence.height, 675);
+  const dims = readPngDimensions(evidence.filePath as string);
+  assert.deepEqual(dims, { width: 1200, height: 675 });
+
+  const png = PNG.sync.read(fs.readFileSync(evidence.filePath as string));
+  assert.ok(evidence.regions.length > 0);
+  for (const region of evidence.regions) {
+    const idx = (png.width * (region.y + Math.floor(region.height / 2)) + (region.x + Math.floor(region.width / 2))) << 2;
+    const observed = hex(png.data[idx], png.data[idx + 1], png.data[idx + 2]);
+    assert.equal(observed, (region.expectedHex as string).toLowerCase(), `region "${region.label}" colour mismatch`);
+  }
+});
+
+test("instagram_image renders a real, square 1080x1080 PNG with every declared region matching its expectedHex", async () => {
+  const outDir = tmpOutDir();
+  const brief = makeBrief({ outputType: "instagram_image", layoutDirection: "centred, text-only" });
+  const evidence = await renderOutput(brief, { logoPath: LOGO_PATH, imagePaths: [] }, outDir);
+
+  assert.equal(evidence.width, 1080);
+  assert.equal(evidence.height, 1080);
+  const dims = readPngDimensions(evidence.filePath as string);
+  assert.deepEqual(dims, { width: 1080, height: 1080 });
+
+  const png = PNG.sync.read(fs.readFileSync(evidence.filePath as string));
+  assert.ok(evidence.regions.length > 0);
+  for (const region of evidence.regions) {
+    const idx = (png.width * (region.y + Math.floor(region.height / 2)) + (region.x + Math.floor(region.width / 2))) << 2;
+    const observed = hex(png.data[idx], png.data[idx + 1], png.data[idx + 2]);
+    assert.equal(observed, (region.expectedHex as string).toLowerCase(), `region "${region.label}" colour mismatch`);
   }
 });
 

@@ -1,10 +1,10 @@
 import path from "node:path";
 import fs from "node:fs";
 import express from "express";
-import { config } from "./config";
+import { config, estimateUsdCost } from "./config";
 import { openDb } from "./db";
 import { cookieMiddleware } from "./security/cookies";
-import { attachSession, loginHandler, logoutHandler, requireAuth } from "./security/auth-middleware";
+import { attachSession, logoutHandler, requireAuth } from "./security/auth-middleware";
 import { requireCsrf } from "./security/csrf";
 import { SlidingWindowLimiter } from "./security/rate-limit";
 import { serveStaticFile } from "./static-files";
@@ -23,9 +23,16 @@ import { runBriefJob } from "./jobs/run-brief-job";
 import { runGenerateJob } from "./jobs/run-generate-job";
 import { createRun, getLatestRunForBrand, getRun } from "./runs";
 import { getOutput, listOutputsForRun, listReviewsForOutput } from "./outputs";
+import { computeOverallPass } from "./review/review";
 import { createShare, getShare, listActiveSharesForBrand, revokeShare } from "./shares";
 import { canAccessBrand, isOwner } from "./security/brand-access";
 import { renderSharePage } from "./share-page";
+import { buildBrandMarkdown } from "./snapshot";
+import { checkUploadAgainstBrand, UploadDecodeError } from "./review/upload-check";
+import { createLead } from "./leads";
+import { notifySlack } from "./slack";
+import type { ApprovedBrandContext } from "./llm";
+import type { BrandContext } from "./import/types";
 
 function notFoundPage(): string {
   return `<!doctype html><html lang="en-GB"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="robots" content="noindex, nofollow"><title>Page not found</title>
@@ -45,17 +52,20 @@ export function createApp() {
     next();
   });
 
+  // Before attachSession: a health check must never provision a workspace.
+  app.get("/healthz", (_req, res) => res.json({ ok: true }));
+
   app.use(express.json({ limit: "100kb" }));
   app.use(cookieMiddleware);
   app.use(attachSession(db));
 
-  app.get("/healthz", (_req, res) => res.json({ ok: true }));
-
   // --- Auth ---
-  app.post("/api/login", loginHandler(db));
+  // No login step: attachSession above silently provisions an isolated,
+  // anonymous workspace on first visit. /api/logout abandons it ("start
+  // over"), not a real sign-out — the next request gets a brand-new one.
   app.post("/api/logout", requireAuth, requireCsrf, logoutHandler(db));
   app.get("/api/session", (req, res) => {
-    res.json({ authenticated: Boolean(req.auth) });
+    res.json({ authenticated: Boolean(req.auth), ownerId: req.auth?.ownerId ?? null });
   });
 
   // --- Brand import ---
@@ -147,6 +157,148 @@ export function createApp() {
       return;
     }
     fs.createReadStream(asset.local_path).pipe(res);
+  });
+
+  // Free-tool brand snapshot: a Claude-ready brand.md download with the
+  // approved palette/fonts/voice, zero contact required. Shared with the
+  // same access rule as other brand assets (owner, or a valid share token).
+  app.get("/api/brands/:id/snapshot.md", requireAuth, (req, res) => {
+    const brand = getBrand(db, req.params.id);
+    if (!brand || !canAccessBrand(req, db, brand)) {
+      res.status(404).json({ error: "not_found" });
+      return;
+    }
+    if (!brand.context_json || !brand.approved_context_json) {
+      res.status(409).json({ error: "not_ready", message: "Approve a brand selection before downloading a snapshot." });
+      return;
+    }
+    const rawContext = JSON.parse(brand.context_json) as BrandContext;
+    const approvedRaw = JSON.parse(brand.approved_context_json) as Partial<ApprovedBrandContext>;
+    const approvedContext: ApprovedBrandContext = {
+      logoAssetId: approvedRaw.logoAssetId ?? null,
+      colours: Array.isArray(approvedRaw.colours) ? approvedRaw.colours : [],
+      fonts: Array.isArray(approvedRaw.fonts) ? approvedRaw.fonts : [],
+      voiceNotes: typeof approvedRaw.voiceNotes === "string" ? approvedRaw.voiceNotes : "",
+    };
+    const markdown = buildBrandMarkdown({ sourceUrl: brand.source_url, rawContext, approvedContext });
+    res.set("Content-Type", "text/markdown; charset=utf-8");
+    res.set("Content-Disposition", 'attachment; filename="brand-snapshot.md"');
+    res.send(markdown);
+  });
+
+  // Free-tool "check this against our brand" upload review — colour only,
+  // deliberately (see upload-check.ts's module doc for why). A separate,
+  // larger JSON body limit applies only to this route; every other route
+  // keeps the tight 100kb default above.
+  const UPLOAD_CHECK_MAX_BYTES = 5 * 1024 * 1024;
+  const ALLOWED_UPLOAD_MIME = new Set(["image/png", "image/jpeg", "image/webp", "image/gif"]);
+  const uploadCheckLimiterByOwner = new SlidingWindowLimiter(10, 60 * 60 * 1000);
+
+  app.post(
+    "/api/brands/:id/check-upload",
+    requireAuth,
+    requireCsrf,
+    express.json({ limit: "8mb" }),
+    async (req, res) => {
+      const brand = getBrand(db, req.params.id);
+      if (!brand || !canAccessBrand(req, db, brand)) {
+        res.status(404).json({ error: "not_found" });
+        return;
+      }
+      if (!uploadCheckLimiterByOwner.check(req.auth!.ownerId)) {
+        res.status(429).json({ error: "rate_limited", message: "Upload-check limit reached: 10 per hour." });
+        return;
+      }
+
+      const mimeType = typeof req.body?.mimeType === "string" ? req.body.mimeType : "";
+      const imageBase64 = typeof req.body?.imageBase64 === "string" ? req.body.imageBase64 : "";
+      if (!ALLOWED_UPLOAD_MIME.has(mimeType) || !imageBase64) {
+        res.status(400).json({
+          error: "invalid_body",
+          message: "mimeType (image/png, image/jpeg, image/webp, or image/gif) and imageBase64 are required.",
+        });
+        return;
+      }
+
+      const buffer = Buffer.from(imageBase64, "base64");
+      if (buffer.length === 0 || buffer.length > UPLOAD_CHECK_MAX_BYTES) {
+        res.status(400).json({
+          error: "invalid_body",
+          message: `Image must be non-empty and under ${UPLOAD_CHECK_MAX_BYTES} bytes.`,
+        });
+        return;
+      }
+
+      const approved = brand.approved_context_json
+        ? (JSON.parse(brand.approved_context_json) as Partial<ApprovedBrandContext>)
+        : null;
+      const approvedColours = approved && Array.isArray(approved.colours) ? approved.colours : [];
+      if (approvedColours.length === 0) {
+        res.status(409).json({
+          error: "no_palette",
+          message: "No colours were approved for this brand yet — approve a selection first.",
+        });
+        return;
+      }
+
+      try {
+        const result = await checkUploadAgainstBrand(buffer, mimeType, approvedColours, config.UPLOAD_COLOUR_MATCH_THRESHOLD);
+        res.json(result);
+      } catch (err) {
+        if (err instanceof UploadDecodeError) {
+          res.status(400).json({ error: "undecodable_image", message: err.message });
+          return;
+        }
+        res.status(500).json({ error: "check_failed", message: "Could not analyse the uploaded image." });
+      }
+    }
+  );
+
+  // Optional, post-delivery email capture. Never required to use any part
+  // of the free tool — see src/leads.ts and the free-journey UI, which only
+  // shows this after a run has actually delivered something.
+  const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+  const leadLimiterByOwner = new SlidingWindowLimiter(5, 60 * 60 * 1000);
+
+  app.post("/api/brands/:id/leads", requireAuth, requireCsrf, async (req, res) => {
+    const brand = getBrand(db, req.params.id);
+    if (!brand || brand.owner_id !== req.auth!.ownerId) {
+      res.status(404).json({ error: "not_found" });
+      return;
+    }
+    if (!leadLimiterByOwner.check(req.auth!.ownerId)) {
+      res.status(429).json({ error: "rate_limited", message: "Please try again later." });
+      return;
+    }
+
+    const email = typeof req.body?.email === "string" ? req.body.email.trim() : "";
+    const preferredTool = typeof req.body?.preferredTool === "string" ? req.body.preferredTool.trim().slice(0, 200) : null;
+    const notes = typeof req.body?.notes === "string" ? req.body.notes.trim().slice(0, 2000) : null;
+    const consent = req.body?.consent === true;
+
+    if (!EMAIL_RE.test(email)) {
+      res.status(400).json({ error: "invalid_body", message: "A valid email address is required." });
+      return;
+    }
+    if (!consent) {
+      res.status(400).json({ error: "consent_required", message: "Consent is required to save your details." });
+      return;
+    }
+
+    const lead = createLead(db, brand.id, { email, preferredTool, notes: notes || null, consent: true });
+    void notifySlack(
+      [
+        "New Brand OS free-tool lead",
+        `Brand: ${brand.source_url}`,
+        `Email: ${email}`,
+        preferredTool ? `Preferred tool: ${preferredTool}` : null,
+        notes ? `Notes: ${notes}` : null,
+      ]
+        .filter((l): l is string => l !== null)
+        .join("\n")
+    );
+
+    res.status(201).json({ ok: true, id: lead.id });
   });
 
   app.patch("/api/brands/:id", requireAuth, requireCsrf, (req, res) => {
@@ -284,6 +436,33 @@ export function createApp() {
     return row.n;
   }
 
+  /**
+   * Estimated USD spend (see config.estimateUsdCost — Sonnet 5.5 list pricing,
+   * not a billing reconciliation) over the last 24h. ownerId scopes it to one
+   * visitor's workspace for the per-visitor cap; omitted, it's every run —
+   * the global cap. Only counts runs that actually called the model
+   * (prompt_tokens set), so a run that failed before the API call costs $0.
+   */
+  function dailySpendUsd(ownerId?: string): number {
+    const rows = (
+      ownerId
+        ? db
+            .prepare(
+              `SELECT r.prompt_tokens as prompt_tokens, r.completion_tokens as completion_tokens
+               FROM runs r JOIN brands b ON b.id = r.brand_id
+               WHERE b.owner_id = ? AND r.created_at > datetime('now', '-1 day') AND r.prompt_tokens IS NOT NULL`
+            )
+            .all(ownerId)
+        : db
+            .prepare(
+              `SELECT prompt_tokens, completion_tokens FROM runs
+               WHERE created_at > datetime('now', '-1 day') AND prompt_tokens IS NOT NULL`
+            )
+            .all()
+    ) as Array<{ prompt_tokens: number; completion_tokens: number }>;
+    return rows.reduce((sum, r) => sum + estimateUsdCost(r.prompt_tokens, r.completion_tokens ?? 0), 0);
+  }
+
   function ownerHasActiveRun(ownerId: string): boolean {
     const row = db
       .prepare(
@@ -325,6 +504,20 @@ export function createApp() {
       res.status(429).json({ error: "rate_limited", message: "The daily run limit has been reached." });
       return;
     }
+    if (dailySpendUsd() >= config.GLOBAL_DAILY_SPEND_USD) {
+      res.status(429).json({
+        error: "spend_cap_reached",
+        message: "This free tool has reached its spend limit for today. Please try again tomorrow.",
+      });
+      return;
+    }
+    if (dailySpendUsd(ownerId) >= config.PER_VISITOR_DAILY_SPEND_USD) {
+      res.status(429).json({
+        error: "spend_cap_reached",
+        message: "You've reached today's free limit for this workspace. Please try again tomorrow.",
+      });
+      return;
+    }
     if (ownerHasActiveRun(ownerId)) {
       res.status(409).json({
         error: "run_in_progress",
@@ -352,21 +545,38 @@ export function createApp() {
       res.status(404).json({ error: "not_found" });
       return;
     }
-    const { run } = found;
-    const outputs = listOutputsForRun(db, run.id).map((o) => ({
-      id: o.id,
-      type: o.type,
-      status: o.status,
-      version: o.version,
-      brief: o.template_inputs_json ? JSON.parse(o.template_inputs_json) : null,
-      reviews: listReviewsForOutput(db, o.id).map((r) => ({
+    const { run, brand } = found;
+    // Brand versioning: a run is stamped with the approved-context version it
+    // was generated against (brand.approved_context_version at the time —
+    // see POST .../runs above). If the brand's approved context has moved on
+    // since, every output from this run is honestly "needs review" — never
+    // silently still shown as current.
+    const needsReview = run.context_version !== brand.approved_context_version;
+    const outputs = listOutputsForRun(db, run.id).map((o) => {
+      const reviews = listReviewsForOutput(db, o.id).map((r) => ({
         id: r.id,
         outputVersion: r.output_version,
         findings: JSON.parse(r.findings_json),
         fixes: r.fixes_json ? JSON.parse(r.fixes_json) : [],
         createdAt: r.created_at,
-      })),
-    }));
+      }));
+      const latestReview = reviews[reviews.length - 1];
+      const overallPass = latestReview ? computeOverallPass(latestReview.findings) : false;
+      // No opaque score: just the one honest label a visitor needs — never
+      // "Brand approved" unless every check genuinely passed, and never once
+      // the brand itself has moved on from the version this was built against.
+      const label = needsReview ? "Needs review" : overallPass ? "Brand approved" : "Draft";
+      return {
+        id: o.id,
+        type: o.type,
+        status: o.status,
+        version: o.version,
+        brief: o.template_inputs_json ? JSON.parse(o.template_inputs_json) : null,
+        reviews,
+        needsReview,
+        label,
+      };
+    });
 
     res.json({
       id: run.id,

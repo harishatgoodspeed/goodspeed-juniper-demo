@@ -4,6 +4,7 @@ import { z } from "zod";
 import { config } from "./config";
 import type { BrandContext } from "./import/types";
 import type { Brief, BriefSet, OutputType } from "./pipeline-types";
+import { detectEnglishVariant, englishVariantInstruction } from "./english-variant";
 
 /**
  * The shape PATCH /api/brands/:id currently persists as approved_context_json
@@ -16,6 +17,8 @@ export interface ApprovedBrandContext {
   logoAssetId: string | null;
   colours: string[];
   fonts: string[];
+  /** Freeform voice guidance the owner approved (e.g. "confident, no exclamation points, short sentences"). Empty string if none was given — never invented. */
+  voiceNotes: string;
 }
 
 export interface GenerateBriefsInput {
@@ -57,10 +60,17 @@ export class BriefReferenceError extends Error {
   }
 }
 
-const OUTPUT_TYPES: OutputType[] = ["linkedin_image", "one_pager_pdf", "slide", "post_copy"];
+const OUTPUT_TYPES: OutputType[] = [
+  "linkedin_image",
+  "x_image",
+  "instagram_image",
+  "one_pager_pdf",
+  "slide",
+  "post_copy",
+];
 
 const BriefShape = z.object({
-  outputType: z.enum(["linkedin_image", "one_pager_pdf", "slide", "post_copy"]),
+  outputType: z.enum(["linkedin_image", "x_image", "instagram_image", "one_pager_pdf", "slide", "post_copy"]),
   purpose: z.string().min(1),
   audience: z.string().min(1),
   sourcedFactualCopy: z.array(z.string()),
@@ -75,7 +85,7 @@ const BriefShape = z.object({
 });
 
 const BriefsToolInput = z.object({
-  briefs: z.array(BriefShape).length(4),
+  briefs: z.array(BriefShape).length(OUTPUT_TYPES.length),
 });
 
 function systemPrompt(): string {
@@ -91,6 +101,8 @@ function systemPrompt(): string {
     "- sourcedFactualCopy and postCopyText (for the post_copy brief only) must contain only facts that are explicitly present in the brand description or page excerpt you are given. If a commercial fact (a price, a date, a metric, a partner name, a quote) is not explicitly given to you, do not invent a plausible-sounding one — put a note about the missing fact in that brief's unknowns array instead.",
     "- Never invent testimonials, review scores, or results.",
     "- Voice: write without exclamation points, matching any voice guidance you are given.",
+    '- "instagram_image" renders as a centred square post — keep its headline short (under ~8 words) since the layout has no room for a long wrapped heading.',
+    '- "x_image" and "linkedin_image" render as the same wide two-column layout at slightly different sizes — write each brief\'s copy for its own platform rather than duplicating the other verbatim.',
   ].join("\n");
 }
 
@@ -107,11 +119,16 @@ function userPrompt(input: GenerateBriefsInput): string {
     "",
     `Approved logo asset ID: ${input.context.logoAssetId ?? "none approved"}`,
     "",
+    "Approved voice guidance (follow this exactly; if empty, infer a plain, confident voice from the page excerpt only):",
+    input.context.voiceNotes || "(none given)",
+    "",
     "Brand description (source of facts for sourcedFactualCopy/postCopyText):",
     input.rawContext.description ?? "(none extracted)",
     "",
     "Brand page excerpt (further source of facts):",
     input.rawContext.textExcerpt || "(none extracted)",
+    "",
+    englishVariantInstruction(detectEnglishVariant(`${input.rawContext.description ?? ""} ${input.rawContext.textExcerpt}`)),
   ].filter((l): l is string => l !== null);
   return lines.join("\n");
 }

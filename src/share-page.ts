@@ -2,6 +2,7 @@ import type { BrandRow } from "./brands";
 import type { RunRow } from "./runs";
 import type { OutputRow, ReviewRow } from "./outputs";
 import type { BrandContext } from "./import/types";
+import { computeOverallPass } from "./review/review";
 
 export interface ShareOutputView {
   output: OutputRow;
@@ -49,6 +50,8 @@ function statusLabel(status: string): string {
 function outputTypeLabel(type: string): string {
   const labels: Record<string, string> = {
     linkedin_image: "LinkedIn image",
+    x_image: "X image",
+    instagram_image: "Instagram image",
     one_pager_pdf: "One page PDF",
     slide: "Slide",
     post_copy: "Post copy",
@@ -163,25 +166,43 @@ function renderChecks(reviews: ReviewRow[]): string {
     </div>`;
 }
 
-function renderOutputsSection(outputs: ShareOutputView[], token: string | null): string {
+/**
+ * No opaque score: one honest label per output. "Brand approved" only when
+ * every check in the latest review genuinely passed (or was not applicable)
+ * — never when the brand's approved context has moved on since this output
+ * was built, even if its own review once passed.
+ */
+function outputApprovalLabel(reviews: ReviewRow[], needsReview: boolean): { text: string; chipClass: string } {
+  if (needsReview) return { text: "Needs review", chipClass: "status-partial" };
+  const latest = reviews[reviews.length - 1];
+  if (!latest) return { text: "Draft", chipClass: "status-partial" };
+  type Check = { kind: string; status: string };
+  const checks = JSON.parse(latest.findings_json) as Check[];
+  const overallPass = computeOverallPass(checks as Parameters<typeof computeOverallPass>[0]);
+  return overallPass ? { text: "Brand approved", chipClass: "status-pass" } : { text: "Draft", chipClass: "status-partial" };
+}
+
+function renderOutputsSection(outputs: ShareOutputView[], token: string | null, needsReview: boolean): string {
   if (outputs.length === 0) {
     return `<section aria-labelledby="outputs-heading"><h2 id="outputs-heading">The outputs</h2><p class="muted">Nothing has been generated for this brand yet.</p></section>`;
   }
   const items = outputs
-    .map(
-      ({ output, reviews }) => `
+    .map(({ output, reviews }) => {
+      const approval = outputApprovalLabel(reviews, needsReview);
+      return `
       <details class="output-card">
         <summary>
           <span>${esc(outputTypeLabel(output.type))}</span>
-          <span class="status-chip status-${esc(output.status)}" role="status">${esc(statusLabel(output.status))}</span>
+          <span class="status-chip ${esc(approval.chipClass)}" role="status">${esc(approval.text)}</span>
         </summary>
         <div class="output-body">
+          ${needsReview ? `<p class="muted">The approved brand has changed since this was generated. It needs a fresh run to carry the current colours, fonts and voice.</p>` : ""}
           ${renderOutputPreview(output, token)}
           <h4>Review</h4>
           ${renderChecks(reviews)}
         </div>
-      </details>`
-    )
+      </details>`;
+    })
     .join("");
   return `<section aria-labelledby="outputs-heading"><h2 id="outputs-heading">The outputs</h2><div class="output-list">${items}</div></section>`;
 }
@@ -190,6 +211,7 @@ export function renderSharePage(data: SharePageData): string {
   const { brand, run, outputs, viewToken, logoAssetId } = data;
   const context: BrandContext | null = brand.context_json ? JSON.parse(brand.context_json) : null;
   const title = context?.title ?? brand.source_url;
+  const needsReview = run ? run.context_version !== brand.approved_context_version : false;
 
   const promptSection = run
     ? `
@@ -207,7 +229,7 @@ export function renderSharePage(data: SharePageData): string {
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="robots" content="noindex, nofollow">
-<title>${esc(title)} — Goodspeed Brand OS</title>
+<title>${esc(title)}: Goodspeed Brand OS</title>
 <style>
   :root { color-scheme: light; }
   * { box-sizing: border-box; }
@@ -270,7 +292,7 @@ export function renderSharePage(data: SharePageData): string {
     ${promptSection}
     ${renderBrandSection(brand, context, logoAssetId, viewToken)}
     ${renderBriefsSection(outputs)}
-    ${renderOutputsSection(outputs, viewToken)}
+    ${renderOutputsSection(outputs, viewToken, needsReview)}
 
     <div class="cta">
       <p>Want your own brand working this way?</p>

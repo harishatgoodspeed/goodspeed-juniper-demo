@@ -4,7 +4,6 @@ import { config } from "../config";
 
 export const SESSION_COOKIE = "gs_session";
 export const SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
-export const DEFAULT_OWNER_ID = "owner_default";
 
 export function sign(value: string, secret = config.SESSION_SECRET): string {
   const mac = crypto.createHmac("sha256", secret).update(value).digest("hex");
@@ -24,19 +23,6 @@ export function verifySigned(signed: string, secret = config.SESSION_SECRET): st
   return value;
 }
 
-/** Constant-time comparison for the shared access code. */
-export function accessCodeMatches(candidate: string): boolean {
-  const expected = Buffer.from(config.APP_ACCESS_CODE);
-  const given = Buffer.from(candidate ?? "");
-  if (expected.length !== given.length) {
-    // Still do a comparison of equal length to avoid a length side-channel
-    // being the only timing signal; this call's result is discarded.
-    crypto.timingSafeEqual(expected, expected);
-    return false;
-  }
-  return crypto.timingSafeEqual(expected, given);
-}
-
 export interface SessionRow {
   id: string;
   owner_id: string;
@@ -45,18 +31,15 @@ export interface SessionRow {
 }
 
 /**
- * This is a single-operator private prototype gated by one shared access
- * code (see APP_ACCESS_CODE), not a multi-tenant signup system. Every valid
- * login resolves to the same default owner so the one operator always sees
- * the same workspace across sessions and devices. The schema still models
- * owner_id on every table so a real multi-user mode is additive later.
+ * Public free-tool access: no signup, no access code. Every visitor with no
+ * valid session cookie gets a brand-new, isolated owner row the first time
+ * they hit the app (see attachSession in auth-middleware.ts) — this is the
+ * only thing that creates an owner. Two visitors never share one.
  */
-export function getOrCreateDefaultOwner(db: Database.Database): string {
-  const existing = db.prepare("SELECT id FROM owners WHERE id = ?").get(DEFAULT_OWNER_ID);
-  if (!existing) {
-    db.prepare("INSERT INTO owners (id) VALUES (?)").run(DEFAULT_OWNER_ID);
-  }
-  return DEFAULT_OWNER_ID;
+export function createAnonymousOwner(db: Database.Database): string {
+  const id = `owner_${crypto.randomBytes(12).toString("hex")}`;
+  db.prepare("INSERT INTO owners (id) VALUES (?)").run(id);
+  return id;
 }
 
 export function createSession(db: Database.Database, ownerId: string): SessionRow {
