@@ -1,0 +1,9 @@
+{
+  "name": "goodspeed-juniper-demo",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Static demo page: Goodspeed x Juniper Goods AI build walkthrough",
+  "scripts": {
+    "start": "node server.js"
+  }
+}
