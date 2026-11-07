@@ -33,7 +33,7 @@ export async function reviewWithRepair(
   options: ReviewOptions = {}
 ): Promise<ReviewWithRepairResult> {
   let currentBrief = brief;
-  let review = reviewOutput(evidence, currentBrief, options);
+  let review = await reviewOutput(evidence, currentBrief, options);
 
   if (review.overallPass) {
     // If everything passed first time, say so — never manufacture a failure.
@@ -49,7 +49,7 @@ export async function reviewWithRepair(
     const before = review;
     currentBrief = fix.brief;
     const newEvidence = await render(currentBrief);
-    const after = reviewOutput(newEvidence, currentBrief, options);
+    const after = await reviewOutput(newEvidence, currentBrief, options);
 
     repairs.push({ attempt, changedFields: fix.changedFields, before, after });
     review = after;

@@ -32,7 +32,7 @@ function rawContext(overrides: Partial<BrandContext> = {}): BrandContext {
 
 function baseInput() {
   return {
-    context: { logoAssetId: APPROVED_LOGO, colours: APPROVED_COLOURS, fonts: APPROVED_FONTS },
+    context: { logoAssetId: APPROVED_LOGO, colours: APPROVED_COLOURS, fonts: APPROVED_FONTS, voiceNotes: "Confident, no exclamation points." },
     rawContext: rawContext(),
     task: "Launch a new boot colourway",
   };

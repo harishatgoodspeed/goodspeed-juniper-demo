@@ -1,37 +1,56 @@
 import { compareHex, sampleRegionHex } from "./colour";
+import { assessCopy, type CopyAssessmentClient } from "./copy-assessment";
 import { config } from "../config";
 import type { Brief, CheckStatus, RenderEvidence, ReviewCheck, ReviewResult } from "../pipeline-types";
 
 export interface ReviewOptions {
   colourDeltaEThreshold?: number;
   /**
-   * The copy check is a "not_verified" stub until Phase 2's real AI voice/fact
-   * assessment is wired in (see README) — defaulting this to false means a
-   * missing copy assessment doesn't block overallPass in the meantime.
-   * Flip to true once a real assessment exists, so an unverified copy claim
-   * once again counts against overallPass like every other check kind.
+   * Real, public free-tool launch: a copy check sitting at not_verified now
+   * blocks overallPass by default, same as any other unverified check — see
+   * DEFAULT_REQUIRE_COPY_VERIFIED. Override to false only to deliberately
+   * reproduce the old "copy assessment is best-effort" behaviour.
    */
   requireCopyVerified?: boolean;
+  /** Injectable for tests, so copy review never needs a real ANTHROPIC_API_KEY to exercise offline. */
+  copyAssessmentClient?: CopyAssessmentClient;
 }
 
-export function reviewOutput(evidence: RenderEvidence, brief: Brief, options: ReviewOptions = {}): ReviewResult {
+export async function reviewOutput(evidence: RenderEvidence, brief: Brief, options: ReviewOptions = {}): Promise<ReviewResult> {
   const threshold = options.colourDeltaEThreshold ?? config.COLOUR_DELTA_E_THRESHOLD;
-  const requireCopyVerified = options.requireCopyVerified ?? false;
+  const requireCopyVerified = options.requireCopyVerified ?? DEFAULT_REQUIRE_COPY_VERIFIED;
 
   const checks: ReviewCheck[] = [
     ...colourChecks(evidence, threshold),
     ...typographyChecks(evidence),
     logoCheck(evidence, brief),
-    copyCheck(evidence),
+    await copyCheck(evidence, brief, options.copyAssessmentClient),
   ];
 
-  const overallPass = checks.every((c) => {
+  return { checks, overallPass: computeOverallPass(checks, requireCopyVerified) };
+}
+
+/**
+ * Real, public free-tool launch: a copy check sitting at not_verified is no
+ * longer given a pass by default — "Brand approved" must mean every check
+ * actually passed, copy included, now that copyCheck() below runs a real
+ * assessment rather than the earlier stub.
+ */
+export const DEFAULT_REQUIRE_COPY_VERIFIED = true;
+
+/**
+ * The one rule for whether a set of checks counts as fully approved —
+ * exported so anything reading already-stored findings back out of the
+ * database (the API, the share page) derives the exact same "Draft" vs
+ * "Brand approved" answer `reviewOutput` would give, instead of
+ * re-implementing or drifting from this rule.
+ */
+export function computeOverallPass(checks: ReviewCheck[], requireCopyVerified = DEFAULT_REQUIRE_COPY_VERIFIED): boolean {
+  return checks.every((c) => {
     if (c.status === "not_applicable") return true;
     if (c.status === "not_verified" && c.kind === "copy" && !requireCopyVerified) return true;
     return c.status === "pass";
   });
-
-  return { checks, overallPass };
 }
 
 function colourChecks(evidence: RenderEvidence, threshold: number): ReviewCheck[] {
@@ -174,7 +193,7 @@ function logoCheck(evidence: RenderEvidence, brief: Brief): ReviewCheck {
   };
 }
 
-function copyCheck(evidence: RenderEvidence): ReviewCheck {
+async function copyCheck(evidence: RenderEvidence, brief: Brief, client?: CopyAssessmentClient): Promise<ReviewCheck> {
   if (evidence.outputType !== "post_copy") {
     return {
       kind: "copy",
@@ -186,29 +205,29 @@ function copyCheck(evidence: RenderEvidence): ReviewCheck {
   }
 
   const text = evidence.text ?? "";
-  const hasExclamation = text.includes("!");
-  const phase2Note =
-    "A full AI voice/fact assessment against the brief's sourced copy and voice guidance is Phase 2+ work, not yet wired in here — when it exists it is an AI assessment, not a guarantee.";
 
-  if (hasExclamation) {
-    // This one sub-check is real and mechanical (not an LLM judgement), so it
-    // can genuinely fail rather than sit at not_verified like the rest of the
-    // copy assessment.
+  // This one sub-check is real and mechanical (not an LLM judgement), so it
+  // can fail outright without spending an API call — keep it first.
+  if (text.includes("!")) {
     return {
       kind: "copy",
       status: "fail",
       observed: text || "(empty)",
       approved: "no exclamation points (seeded voice rule)",
-      explanation: `Fails the seeded voice rule "no exclamation points": the copy contains an exclamation mark. ${phase2Note}`,
+      explanation: 'Fails the seeded voice rule "no exclamation points": the copy contains an exclamation mark.',
     };
   }
 
+  const assessment = await assessCopy(
+    { sourcedFactualCopy: brief.sourcedFactualCopy, voiceGuidance: brief.voiceGuidance, text },
+    { client }
+  );
   return {
     kind: "copy",
-    status: "not_verified",
+    status: assessment.status,
     observed: text || "(empty)",
     approved: "sourced facts only, voice guidance followed",
-    explanation: `${phase2Note} One mechanical sub-check did run: the copy passes the seeded voice rule "no exclamation points".`,
+    explanation: assessment.explanation,
   };
 }
 

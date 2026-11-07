@@ -16,6 +16,8 @@ export interface ApprovedBrandContext {
   logoAssetId: string | null;
   colours: string[];
   fonts: string[];
+  /** Freeform voice guidance the owner approved (e.g. "confident, no exclamation points, short sentences"). Empty string if none was given — never invented. */
+  voiceNotes: string;
 }
 
 export interface GenerateBriefsInput {
@@ -106,6 +108,9 @@ function userPrompt(input: GenerateBriefsInput): string {
     ...input.context.fonts.map((f) => `- ${f}`),
     "",
     `Approved logo asset ID: ${input.context.logoAssetId ?? "none approved"}`,
+    "",
+    "Approved voice guidance (follow this exactly; if empty, infer a plain, confident voice from the page excerpt only):",
+    input.context.voiceNotes || "(none given)",
     "",
     "Brand description (source of facts for sourcedFactualCopy/postCopyText):",
     input.rawContext.description ?? "(none extracted)",

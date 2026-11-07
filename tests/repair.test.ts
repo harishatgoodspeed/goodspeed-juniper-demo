@@ -58,7 +58,7 @@ test("deterministic wrong-palette-token fixture: fail -> repair -> pass, with a 
   };
 
   // Sanity: the first review genuinely fails with a real, non-trivial deltaE.
-  const firstReview = reviewOutput(beforeEvidence, brief);
+  const firstReview = await reviewOutput(beforeEvidence, brief);
   const firstColour = firstReview.checks.find((c) => c.kind === "colour");
   assert.equal(firstColour?.status, "fail");
   assert.ok((firstColour?.deltaE ?? 0) > 10, `expected a large deltaE for a clearly wrong colour, got ${firstColour?.deltaE}`);
