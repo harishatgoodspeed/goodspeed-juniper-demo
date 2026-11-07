@@ -2,27 +2,51 @@ import { reviewOutput, type ReviewOptions } from "./review";
 import type { Brief, RenderEvidence, RepairAttempt, ReviewResult, ReviewWithRepairResult } from "../pipeline-types";
 
 /**
- * Only a failing *colour* check is modelled as repairable here: the
- * realistic fix this phase can make is "the brief specified the wrong
- * palette hex" — correcting `paletteTokenHexes` and asking Phase 3 to
- * re-render. A failing typography/logo/copy check isn't something this brief
- * change can fix, so it's left unresolved rather than papered over.
+ * What this phase can actually repair by changing the brief and
+ * re-rendering — deliberately narrow, and deliberately never an LLM call
+ * (an LLM-based "try again" would spend real money per repair attempt,
+ * against a free tool's per-visitor/global daily spend caps, for a fix this
+ * phase can't even verify will land before spending it):
+ *
+ * - colour: the realistic fix is "the brief specified the wrong palette
+ *   hex" — swap it for the approved one and re-render.
+ * - copy, but only the mechanical "no exclamation points" rule
+ *   (review.ts's copyCheck fails this without even calling the model): a
+ *   deterministic text fix, not a judgement call, so no re-assessment risk.
+ *
+ * Everything else (typography, logo, copy failures the model actually had
+ * to judge — an invented claim, a voice mismatch) isn't something a brief
+ * field can deterministically fix, so it's left unresolved rather than
+ * papered over or silently retried.
  */
 function computeFix(
   brief: Brief,
   review: ReviewResult
 ): { brief: Brief; changedFields: Record<string, { from: unknown; to: unknown }> } | null {
-  const failure = review.checks.find((c) => c.kind === "colour" && c.status === "fail");
-  if (!failure) return null;
+  const colourFailure = review.checks.find((c) => c.kind === "colour" && c.status === "fail");
+  if (colourFailure) {
+    const wrongHex = colourFailure.observed.toLowerCase();
+    const correctHex = colourFailure.approved;
+    const newHexes = brief.paletteTokenHexes.map((h) => (h.toLowerCase() === wrongHex ? correctHex : h));
 
-  const wrongHex = failure.observed.toLowerCase();
-  const correctHex = failure.approved;
-  const newHexes = brief.paletteTokenHexes.map((h) => (h.toLowerCase() === wrongHex ? correctHex : h));
+    return {
+      brief: { ...brief, paletteTokenHexes: newHexes },
+      changedFields: { paletteTokenHexes: { from: brief.paletteTokenHexes, to: newHexes } },
+    };
+  }
 
-  return {
-    brief: { ...brief, paletteTokenHexes: newHexes },
-    changedFields: { paletteTokenHexes: { from: brief.paletteTokenHexes, to: newHexes } },
-  };
+  const exclamationFailure = review.checks.find(
+    (c) => c.kind === "copy" && c.status === "fail" && /exclamation/i.test(c.explanation)
+  );
+  if (exclamationFailure && brief.postCopyText && brief.postCopyText.includes("!")) {
+    const fixedText = brief.postCopyText.replace(/!+/g, ".");
+    return {
+      brief: { ...brief, postCopyText: fixedText },
+      changedFields: { postCopyText: { from: brief.postCopyText, to: fixedText } },
+    };
+  }
+
+  return null;
 }
 
 export async function reviewWithRepair(

@@ -4,6 +4,7 @@ import { reviewWithRepair } from "../src/review/repair";
 import { reviewOutput } from "../src/review/review";
 import { writeSolidPng, readRegionBytes } from "./helpers/png";
 import type { Brief, RenderEvidence } from "../src/pipeline-types";
+import type { CopyAssessmentClient } from "../src/review/copy-assessment";
 
 const APPROVED_HEX = "#C6DD66";
 const WRONG_HEX = "#6680DD";
@@ -104,6 +105,91 @@ test("a passing first review returns immediately with no manufactured failure", 
   assert.equal(result.repairs.length, 0);
   assert.equal(result.unresolved, false);
   assert.equal(result.finalReview.overallPass, true);
+});
+
+function postCopyBrief(postCopyText: string): Brief {
+  return {
+    outputType: "post_copy",
+    purpose: "Announce the launch",
+    audience: "Existing customers",
+    sourcedFactualCopy: ["Launching in six retail partners this spring."],
+    layoutDirection: "n/a",
+    paletteTokenHexes: [],
+    fontFamilies: [],
+    logoAssetId: null,
+    imageAssetIds: [],
+    voiceGuidance: "Confident, no exclamation points.",
+    unknowns: [],
+    postCopyText,
+  };
+}
+
+function postCopyEvidence(text: string): RenderEvidence {
+  return {
+    outputType: "post_copy",
+    filePath: null,
+    width: 0,
+    height: 0,
+    regions: [],
+    fontChecks: [],
+    logoCheck: null,
+    overflow: false,
+    text,
+  };
+}
+
+function mockCopyClient(parsedOutput: unknown): CopyAssessmentClient {
+  return { messages: { parse: async () => ({ parsed_output: parsedOutput }) } };
+}
+
+test("mechanical exclamation-point fixture: fail -> repair strips it deterministically -> pass, with no LLM call for the fix itself", async () => {
+  const brief = postCopyBrief("We are launching in six retail partners this spring!");
+  const badEvidence = postCopyEvidence(brief.postCopyText!);
+  const copyAssessmentClient = mockCopyClient({
+    factsAreAllSourced: true,
+    inventedOrUnsupportedClaims: [],
+    matchesVoiceGuidance: true,
+    voiceMismatchExplanation: "",
+  });
+
+  const firstReview = await reviewOutput(badEvidence, brief);
+  const firstCopy = firstReview.checks.find((c) => c.kind === "copy");
+  assert.equal(firstCopy?.status, "fail");
+  assert.match(firstCopy!.explanation, /exclamation/i);
+
+  let renderCalls = 0;
+  const render = async (b: Brief): Promise<RenderEvidence> => {
+    renderCalls++;
+    return postCopyEvidence(b.postCopyText ?? "");
+  };
+
+  const result = await reviewWithRepair(badEvidence, brief, render, 2, { copyAssessmentClient });
+
+  assert.equal(renderCalls, 1, "a single deterministic fix should re-render exactly once");
+  assert.equal(result.repairs.length, 1);
+  assert.equal(result.unresolved, false);
+  assert.equal(result.finalReview.overallPass, true);
+  assert.equal(result.repairs[0].changedFields.postCopyText.to, "We are launching in six retail partners this spring.");
+  assert.equal(result.repairs[0].before.overallPass, false);
+  assert.equal(result.repairs[0].after.overallPass, true);
+});
+
+test("a copy failure the model actually had to judge (an invented claim) is left unresolved — not a deterministic fix, never silently retried", async () => {
+  const brief = postCopyBrief("We've helped over 10,000 brands this year.");
+  const evidence = postCopyEvidence(brief.postCopyText!);
+  const copyAssessmentClient = mockCopyClient({
+    factsAreAllSourced: false,
+    inventedOrUnsupportedClaims: ['"over 10,000 brands" is not in the sourced facts'],
+    matchesVoiceGuidance: true,
+    voiceMismatchExplanation: "",
+  });
+  const render = async (): Promise<RenderEvidence> => {
+    throw new Error("render should never be called — an invented-claim failure isn't a deterministic fix");
+  };
+
+  const result = await reviewWithRepair(evidence, brief, render, 2, { copyAssessmentClient });
+  assert.equal(result.repairs.length, 0);
+  assert.equal(result.unresolved, true);
 });
 
 test("a non-colour failure (e.g. typography) is left unresolved with zero repair attempts — not something this phase can fix", async () => {
