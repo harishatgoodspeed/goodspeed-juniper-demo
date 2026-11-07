@@ -4,6 +4,7 @@ import { z } from "zod";
 import { config } from "./config";
 import type { BrandContext } from "./import/types";
 import type { Brief, BriefSet, OutputType } from "./pipeline-types";
+import { detectEnglishVariant, englishVariantInstruction } from "./english-variant";
 
 /**
  * The shape PATCH /api/brands/:id currently persists as approved_context_json
@@ -126,6 +127,8 @@ function userPrompt(input: GenerateBriefsInput): string {
     "",
     "Brand page excerpt (further source of facts):",
     input.rawContext.textExcerpt || "(none extracted)",
+    "",
+    englishVariantInstruction(detectEnglishVariant(`${input.rawContext.description ?? ""} ${input.rawContext.textExcerpt}`)),
   ].filter((l): l is string => l !== null);
   return lines.join("\n");
 }
