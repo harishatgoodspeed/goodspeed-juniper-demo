@@ -92,7 +92,13 @@ async function evaluateFontChecks(page: Page, fontRoles: FontRoleExpectation[]):
       return el ? getComputedStyle(el).fontFamily : "";
     }, selector);
     const loaded = await isFontAvailable(page, role.expectedFamily);
-    checks.push({ role: role.role, expectedFamily: role.expectedFamily, computedFamily, loaded });
+    checks.push({
+      role: role.role,
+      expectedFamily: role.expectedFamily,
+      expectedFamilyApproved: role.expectedFamilyApproved,
+      computedFamily,
+      loaded,
+    });
   }
   return checks;
 }

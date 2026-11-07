@@ -45,7 +45,7 @@ test("colour check passes when the rendered region matches the approved hex", ()
   const filePath = writeSolidPng(40, 40, "#C6DD66");
   const evidence = fixtureEvidence({
     filePath,
-    regions: [{ label: "background", x: 0, y: 0, width: 40, height: 40, expectedHex: "#C6DD66" }],
+    regions: [{ label: "background", x: 0, y: 0, width: 40, height: 40, expectedHex: "#C6DD66", expectedHexApproved: true }],
   });
   const result = reviewOutput(evidence, fixtureBrief());
   const colour = result.checks.find((c) => c.kind === "colour" && c.observed !== "n/a");
@@ -57,7 +57,7 @@ test("colour check fails when the rendered region does not match, with a real de
   const filePath = writeSolidPng(40, 40, "#6680DD");
   const evidence = fixtureEvidence({
     filePath,
-    regions: [{ label: "background", x: 0, y: 0, width: 40, height: 40, expectedHex: "#C6DD66" }],
+    regions: [{ label: "background", x: 0, y: 0, width: 40, height: 40, expectedHex: "#C6DD66", expectedHexApproved: true }],
   });
   const result = reviewOutput(evidence, fixtureBrief());
   const colour = result.checks.find((c) => c.kind === "colour" && c.observed !== "n/a");
@@ -74,9 +74,21 @@ test("colour checks are not_applicable (never silently absent) when there are no
   assert.equal(colour!.status, "not_applicable");
 });
 
+test("colour check is not_applicable, never a fabricated pass, when the region used the renderer's internal fallback instead of an approved colour", () => {
+  const filePath = writeSolidPng(40, 40, "#1F3A2E"); // the renderer's own DEFAULT_PALETTE.primary
+  const evidence = fixtureEvidence({
+    filePath,
+    regions: [{ label: "brand-bar", x: 0, y: 0, width: 40, height: 40, expectedHex: "#1F3A2E", expectedHexApproved: false }],
+  });
+  const result = reviewOutput(evidence, fixtureBrief());
+  const colour = result.checks.find((c) => c.kind === "colour");
+  assert.equal(colour?.status, "not_applicable");
+  assert.match(colour!.explanation, /internal neutral default/);
+});
+
 test("typography: missing evidence is not_verified, never pass", () => {
   const evidence = fixtureEvidence({
-    fontChecks: [{ role: "heading", expectedFamily: "Inter", computedFamily: "", loaded: false }],
+    fontChecks: [{ role: "heading", expectedFamily: "Inter", expectedFamilyApproved: true, computedFamily: "", loaded: false }],
   });
   const result = reviewOutput(evidence, fixtureBrief());
   const typo = result.checks.find((c) => c.kind === "typography");
@@ -85,7 +97,9 @@ test("typography: missing evidence is not_verified, never pass", () => {
 
 test("typography: a loaded, matching computed font passes", () => {
   const evidence = fixtureEvidence({
-    fontChecks: [{ role: "heading", expectedFamily: "Inter", computedFamily: "Inter, sans-serif", loaded: true }],
+    fontChecks: [
+      { role: "heading", expectedFamily: "Inter", expectedFamilyApproved: true, computedFamily: "Inter, sans-serif", loaded: true },
+    ],
   });
   const result = reviewOutput(evidence, fixtureBrief());
   const typo = result.checks.find((c) => c.kind === "typography");
@@ -94,11 +108,23 @@ test("typography: a loaded, matching computed font passes", () => {
 
 test("typography: loaded but a different font fails", () => {
   const evidence = fixtureEvidence({
-    fontChecks: [{ role: "heading", expectedFamily: "Inter", computedFamily: "Arial", loaded: true }],
+    fontChecks: [{ role: "heading", expectedFamily: "Inter", expectedFamilyApproved: true, computedFamily: "Arial", loaded: true }],
   });
   const result = reviewOutput(evidence, fixtureBrief());
   const typo = result.checks.find((c) => c.kind === "typography");
   assert.equal(typo?.status, "fail");
+});
+
+test("typography is not_applicable, never a fabricated pass, when the role used the renderer's internal fallback font instead of an approved one", () => {
+  const evidence = fixtureEvidence({
+    fontChecks: [
+      { role: "heading", expectedFamily: "Georgia", expectedFamilyApproved: false, computedFamily: "Georgia, serif", loaded: true },
+    ],
+  });
+  const result = reviewOutput(evidence, fixtureBrief());
+  const typo = result.checks.find((c) => c.kind === "typography");
+  assert.equal(typo?.status, "not_applicable");
+  assert.match(typo!.explanation, /internal fallback font/);
 });
 
 test("logo: no approved logo is not_applicable", () => {

@@ -53,6 +53,15 @@ function colourChecks(evidence: RenderEvidence, threshold: number): ReviewCheck[
   return evidence.regions
     .filter((r) => r.expectedHex !== null)
     .map((region): ReviewCheck => {
+      if (!region.expectedHexApproved) {
+        return {
+          kind: "colour",
+          status: "not_applicable",
+          observed: "n/a",
+          approved: "n/a",
+          explanation: `Region "${region.label}" rendered with the renderer's internal neutral default (${region.expectedHex}), not an approved brand colour — no colour was approved for this role, so there is nothing to validate against.`,
+        };
+      }
       if (!evidence.filePath) {
         return {
           kind: "colour",
@@ -102,6 +111,15 @@ function typographyChecks(evidence: RenderEvidence): ReviewCheck[] {
     ];
   }
   return evidence.fontChecks.map((f): ReviewCheck => {
+    if (!f.expectedFamilyApproved) {
+      return {
+        kind: "typography",
+        status: "not_applicable",
+        observed: "n/a",
+        approved: "n/a",
+        explanation: `"${f.role}" rendered with the renderer's internal fallback font (${f.expectedFamily}), not an approved brand font — no font was approved for this role, so there is nothing to validate against.`,
+      };
+    }
     if (!f.loaded && !f.computedFamily) {
       return {
         kind: "typography",

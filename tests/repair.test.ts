@@ -30,7 +30,7 @@ function evidenceWithRegionColour(hex: string): RenderEvidence {
     filePath: writeSolidPng(40, 40, hex),
     width: 1200,
     height: 627,
-    regions: [{ label: "background", x: 0, y: 0, width: 40, height: 40, expectedHex: APPROVED_HEX }],
+    regions: [{ label: "background", x: 0, y: 0, width: 40, height: 40, expectedHex: APPROVED_HEX, expectedHexApproved: true }],
     fontChecks: [],
     logoCheck: null,
     overflow: false,
@@ -113,7 +113,7 @@ test("a non-colour failure (e.g. typography) is left unresolved with zero repair
     width: 1200,
     height: 627,
     regions: [],
-    fontChecks: [{ role: "heading", expectedFamily: "Inter", computedFamily: "Arial", loaded: true }],
+    fontChecks: [{ role: "heading", expectedFamily: "Inter", expectedFamilyApproved: true, computedFamily: "Arial", loaded: true }],
     logoCheck: null,
     overflow: false,
   };

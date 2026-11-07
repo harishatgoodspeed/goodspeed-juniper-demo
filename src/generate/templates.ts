@@ -39,6 +39,7 @@ export interface TemplateAssets {
 export interface FontRoleExpectation {
   role: "heading" | "body";
   expectedFamily: string;
+  expectedFamilyApproved: boolean;
 }
 
 export interface TemplateResult {
@@ -57,20 +58,39 @@ const DEFAULT_PALETTE = { bg: "#F2ECDF", primary: "#1F3A2E", text: "#2B2B28", ac
  * Missing slots fall back to a neutral default rather than guessing at a
  * brand colour that wasn't approved.
  */
-function pickPalette(hexes: string[]): { bg: string; primary: string; text: string; accent: string } {
+interface ResolvedPalette {
+  bg: string;
+  bgApproved: boolean;
+  primary: string;
+  primaryApproved: boolean;
+  text: string;
+  textApproved: boolean;
+  accent: string;
+  accentApproved: boolean;
+}
+
+function pickPalette(hexes: string[]): ResolvedPalette {
   return {
     bg: hexes[0] ?? DEFAULT_PALETTE.bg,
+    bgApproved: hexes[0] !== undefined,
     primary: hexes[1] ?? DEFAULT_PALETTE.primary,
+    primaryApproved: hexes[1] !== undefined,
     text: hexes[2] ?? DEFAULT_PALETTE.text,
+    textApproved: hexes[2] !== undefined,
     accent: hexes[3] ?? hexes[1] ?? DEFAULT_PALETTE.accent,
+    accentApproved: hexes[3] !== undefined || hexes[1] !== undefined,
   };
 }
 
 /** fontFamilies[0] drives headings, [1] drives body (falls back to [0]). Exported so render.ts builds FontCheckEvidence against the same families the CSS actually used. */
-export function resolveFontRoles(fontFamilies: string[]): { heading: string; body: string } {
+export function resolveFontRoles(
+  fontFamilies: string[]
+): { heading: string; headingApproved: boolean; body: string; bodyApproved: boolean } {
   const heading = fontFamilies[0] ?? "Georgia";
+  const headingApproved = fontFamilies[0] !== undefined;
   const body = fontFamilies[1] ?? fontFamilies[0] ?? "Arial";
-  return { heading, body };
+  const bodyApproved = fontFamilies[1] !== undefined || fontFamilies[0] !== undefined;
+  return { heading, headingApproved, body, bodyApproved };
 }
 
 function headingFontStack(family: string): string {
@@ -221,12 +241,12 @@ ${baseStyles()}
 </html>`;
 
   const regions: RenderRegion[] = [
-    { label: "brand-bar", x: 560, y: 14, width: 80, height: 20, expectedHex: palette.primary },
+    { label: "brand-bar", x: 560, y: 14, width: 80, height: 20, expectedHex: palette.primary, expectedHexApproved: palette.primaryApproved },
     // The CTA label is left-aligned with 20px padding (see .cta above)
     // specifically so the button's right-hand portion stays a clean solid
     // fill — this sample point is chosen there, clear of any glyph.
-    { label: "cta-button", x: 230, y: 530, width: 40, height: 20, expectedHex: palette.accent },
-    { label: "background", x: 1140, y: 580, width: 40, height: 20, expectedHex: palette.bg },
+    { label: "cta-button", x: 230, y: 530, width: 40, height: 20, expectedHex: palette.accent, expectedHexApproved: palette.accentApproved },
+    { label: "background", x: 1140, y: 580, width: 40, height: 20, expectedHex: palette.bg, expectedHexApproved: palette.bgApproved },
   ];
 
   return {
@@ -235,8 +255,8 @@ ${baseStyles()}
     height,
     regions,
     fontRoles: [
-      { role: "heading", expectedFamily: fonts.heading },
-      { role: "body", expectedFamily: fonts.body },
+      { role: "heading", expectedFamily: fonts.heading, expectedFamilyApproved: fonts.headingApproved },
+      { role: "body", expectedFamily: fonts.body, expectedFamilyApproved: fonts.bodyApproved },
     ],
   };
 }
@@ -305,11 +325,11 @@ ${baseStyles()}
 </html>`;
 
   const regions: RenderRegion[] = [
-    { label: "brand-bar", x: 6, y: 550, width: 20, height: 20, expectedHex: palette.primary },
+    { label: "brand-bar", x: 6, y: 550, width: 20, height: 20, expectedHex: palette.primary, expectedHexApproved: palette.primaryApproved },
     // Sampled on the button's right-hand portion, clear of the
     // left-aligned, left-padded CTA label (see .cta above).
-    { label: "cta-button", x: contentLeft + 220, y: height - 64 - 56 + 17, width: 40, height: 20, expectedHex: palette.accent },
-    { label: "background", x: 700, y: 90, width: 40, height: 20, expectedHex: palette.bg },
+    { label: "cta-button", x: contentLeft + 220, y: height - 64 - 56 + 17, width: 40, height: 20, expectedHex: palette.accent, expectedHexApproved: palette.accentApproved },
+    { label: "background", x: 700, y: 90, width: 40, height: 20, expectedHex: palette.bg, expectedHexApproved: palette.bgApproved },
   ];
 
   return {
@@ -318,8 +338,8 @@ ${baseStyles()}
     height,
     regions,
     fontRoles: [
-      { role: "heading", expectedFamily: fonts.heading },
-      { role: "body", expectedFamily: fonts.body },
+      { role: "heading", expectedFamily: fonts.heading, expectedFamilyApproved: fonts.headingApproved },
+      { role: "body", expectedFamily: fonts.body, expectedFamilyApproved: fonts.bodyApproved },
     ],
   };
 }
@@ -384,11 +404,11 @@ ${baseStyles()}
 </html>`;
 
   const regions: RenderRegion[] = [
-    { label: "brand-bar", x: 600, y: barTop + 25, width: 80, height: 20, expectedHex: palette.primary },
+    { label: "brand-bar", x: 600, y: barTop + 25, width: 80, height: 20, expectedHex: palette.primary, expectedHexApproved: palette.primaryApproved },
     // Sampled on the button's right-hand portion, clear of the
     // left-aligned, left-padded CTA label (see .cta above).
-    { label: "cta-button", x: contentLeft + 180, y: ctaTop + 18, width: 40, height: 20, expectedHex: palette.accent },
-    { label: "background", x: 900, y: 90, width: 40, height: 20, expectedHex: palette.bg },
+    { label: "cta-button", x: contentLeft + 180, y: ctaTop + 18, width: 40, height: 20, expectedHex: palette.accent, expectedHexApproved: palette.accentApproved },
+    { label: "background", x: 900, y: 90, width: 40, height: 20, expectedHex: palette.bg, expectedHexApproved: palette.bgApproved },
   ];
 
   return {
@@ -397,8 +417,8 @@ ${baseStyles()}
     height,
     regions,
     fontRoles: [
-      { role: "heading", expectedFamily: fonts.heading },
-      { role: "body", expectedFamily: fonts.body },
+      { role: "heading", expectedFamily: fonts.heading, expectedFamilyApproved: fonts.headingApproved },
+      { role: "body", expectedFamily: fonts.body, expectedFamilyApproved: fonts.bodyApproved },
     ],
   };
 }

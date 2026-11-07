@@ -4,13 +4,16 @@ Imports a real website's brand, drafts task briefs against it, renders real
 downloadable assets, reviews them against the brand (with a bounded
 auto-repair loop), and publishes a shareable, access-controlled result page.
 
-**Status: Phases 1–5 built and tested; Docker and deeper multi-instance rate
-limiting are not.** The whole pipeline — import a real site → approve its
-brand → draft briefs → render real PNG/PDF assets → review with real
-CIEDE2000 colour checks and repair on failure → publish a private-by-default
-result page the owner can share via a revocable link — runs end to end.
-What's missing is documented plainly below, not glossed over. **Nothing in
-this repo has been deployed.**
+**Status: Phases 1–5 built and tested, now verified end to end with a real
+`ANTHROPIC_API_KEY` against a real site; Docker and deeper multi-instance
+rate limiting are not built.** The whole pipeline — import a real site →
+approve its brand → draft briefs with a real Anthropic call → render real
+PNG/PDF assets → review with real CIEDE2000 colour checks and repair on
+failure → publish a private-by-default result page the owner can share via
+a revocable link — has been run end to end against `https://goodspeed.studio`
+and produced real briefs, real rendered outputs, and genuine pass/fail
+review findings. What's missing is documented plainly below, not glossed
+over. **Nothing in this repo has been deployed.**
 
 ## Setup
 
@@ -41,15 +44,18 @@ as far as it honestly can and then fails clearly on the brief step (see
 npm test
 ```
 
-98 tests, entirely offline, running under `node --env-file=.env.test`:
+100 tests, entirely offline, running under `node --env-file=.env.test`:
 SSRF checks spin up real local HTTP servers to prove loopback/metadata
 addresses are refused; Phase 3's tests launch a real headless Chromium and
 assert on real PNG/PDF bytes; Phase 4's deterministic wrong-palette-token
 fixture computes a real CIEDE2000 ΔE; Phase 5's tests prove anonymous access
 actually works for a valid share token and actually fails for a wrong one, a
-revoked one, or no token at all. The one thing not exercised by `npm test` is
-a real Anthropic API call (no key in this environment) and a real network
-import (exercised manually — see below).
+revoked one, or no token at all; two tests (added after the live run below)
+prove a colour/font check reports `not_applicable`, never a fabricated
+`pass`, when the renderer used its own internal fallback instead of an
+approved value. `npm test` still mocks the Anthropic client and the network
+import (no key or real network access needed to run it) — those are
+exercised against the real services manually, see below.
 
 ## The pipeline
 
@@ -81,19 +87,54 @@ GET /b/:id[?token=...]               → the result page: owner session or a
 
 ### Verified end to end (manually, not part of `npm test`)
 
-With the server running locally and no `ANTHROPIC_API_KEY` set: imported
-`https://goodspeed.studio` (status `ready`, zero unknowns, its real palette
-and font stack extracted, real logo/og-image/favicon downloaded and
-sanitised), approved a logo + 2 colours + 1 font, created a run, and watched
-it fail cleanly at the brief step with
-`"ANTHROPIC_API_KEY is not configured — set it in .env to generate real
-briefs."` — the run's status became `failed` and the job recorded that exact
-error. No pretend briefs, no fake output. Once a real key is added, the same
-run would proceed through brief → generate → review automatically (the job
-chain is real; `tests/run-brief-job.test.ts`,
-`tests/generate.test.ts`, and `tests/review.test.ts`/`repair.test.ts` each
-test their own stage with real Playwright/CIEDE2000 but a mocked Anthropic
-client, since no key exists in this environment).
+**Without an `ANTHROPIC_API_KEY`**: imported `https://goodspeed.studio`
+(status `ready`, zero unknowns, its real palette and font stack extracted,
+real logo/og-image/favicon downloaded and sanitised), created a run, and
+watched it fail cleanly at the brief step with `"ANTHROPIC_API_KEY is not
+configured — set it in .env to generate real briefs."` — the run's status
+became `failed` and the job recorded that exact error. No pretend briefs, no
+fake output.
+
+**With a real `ANTHROPIC_API_KEY`**: the same brand, with a real logo + 3
+real colours + 2 real fonts approved, ran a real end-to-end run —
+`generateBriefs` made a real call to Claude Sonnet 5.5, Playwright rendered
+real PNG/PDF files for all 4 output types, and `reviewOutput` produced real
+findings:
+
+- Colour checks genuinely **passed** (real CIEDE2000 ΔE 0.00) against the
+  actual approved hexes.
+- Typography checks genuinely **failed** — the approved fonts (proprietary
+  webfonts) have no local `@font-face` file available to the
+  network-isolated renderer, so the browser truthfully fell back to Georgia
+  /Arial and the review reported that fallback as a failure rather than
+  masking it. Loading approved custom webfonts into the renderer is real,
+  not-yet-built work (see Known limitations).
+- The logo check reported `not_verified` (no render evidence yet wired for
+  that asset) and the copy check `not_verified` (Phase 2+ AI assessment
+  still a stub) — both honest, neither a fabricated pass.
+
+Two real bugs were found and fixed by this live run, not by `npm test`:
+
+1. **Forced tool use is a 400 on Claude Sonnet 5.5.** `generateBriefs` used
+   `tool_choice: {type: "tool", name: ...}` to force structured JSON out of
+   the model — a pattern this model's API rejects outright
+   (`tool_choice: type "tool" and "any" are not supported for this model`).
+   Fixed by switching to `client.messages.parse()` with
+   `output_config.format: zodOutputFormat(...)` (the SDK's own recommended
+   replacement for "forced tool call that only existed to get JSON back"),
+   keeping an explicit `BriefsToolInput.safeParse` re-validation afterwards
+   so a misbehaving or mocked client still can't skip it.
+2. **Colour/typography review could report a tautological "pass".** When no
+   colour or font was approved for a role, the renderer (by design) falls
+   back to an internal neutral default (`templates.ts`'s `DEFAULT_PALETTE`,
+   or Georgia/Arial) so it can still render something. The review then
+   sampled the rendered pixels and compared them against that *same*
+   internal default — guaranteed to match, since nothing else drove the
+   render — and reported "pass... matches the approved colour" even though
+   nothing had actually been approved. `RenderRegion`/`FontCheckEvidence`
+   now carry an `expectedHexApproved`/`expectedFamilyApproved` flag set by
+   the template that built them; `reviewOutput` reports `not_applicable`
+   instead of a fabricated pass whenever that flag is false.
 
 ## What's implemented
 
@@ -228,6 +269,23 @@ client, since no key exists in this environment).
   exposure.
 - **Named CSS colours aren't counted** (e.g. `tomato`) — only hex and
   `rgb()`/`rgba()`.
+- **Approved custom webfonts aren't actually loaded into the renderer.**
+  `buildTemplate` writes the approved font-family name into the CSS, but no
+  `@font-face` file is fetched or embedded for it, and the renderer blocks
+  all network requests (by design — see Phase 3's `installNetworkGuard`).
+  For a brand like Goodspeed whose real fonts (Acid Grotesk, Lexend Deca)
+  are proprietary webfonts, this means typography review will honestly
+  **fail** every real run, falling back to Georgia/Arial, until the
+  approved font files are downloaded/embedded the same way the logo asset
+  already is.
+- **Two real bugs caught only by a live run with a real `ANTHROPIC_API_KEY`,
+  not by `npm test`** (see "Verified end to end" above for detail): forced
+  `tool_choice` is a 400 on Claude Sonnet 5.5 (fixed via `messages.parse` +
+  `output_config.format`), and the colour/typography review could report a
+  tautological "pass" against the renderer's own internal fallback palette
+  when nothing was actually approved (fixed with an
+  `expectedHexApproved`/`expectedFamilyApproved` flag that forces
+  `not_applicable` instead).
 - **A real bug caught by manual browser testing, not `npm test`**:
   `share-page.ts` initially built the logo `<img src>` as
   `/api/assets/:id/file`, copying the outputs route's `/file` suffix onto the

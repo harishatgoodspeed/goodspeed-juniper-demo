@@ -55,11 +55,21 @@ export interface RenderRegion {
   height: number;
   /** The approved colour token (hex) this region is supposed to match, or null if this region isn't a colour check target. */
   expectedHex: string | null;
+  /**
+   * False when expectedHex came from the renderer's internal neutral default
+   * (see templates.ts's DEFAULT_PALETTE) because no approved colour filled
+   * this role, rather than from the brief's own paletteTokenHexes. Review
+   * must not report a "pass" against a value nothing was actually approved
+   * against — that would be checking the render against itself.
+   */
+  expectedHexApproved: boolean;
 }
 
 export interface FontCheckEvidence {
   role: string; // e.g. "heading", "body"
   expectedFamily: string;
+  /** False when expectedFamily is the renderer's internal fallback (Georgia/Arial) because no approved font filled this role, not a real approved family. */
+  expectedFamilyApproved: boolean;
   /** The actual computed font-family at render time (from getComputedStyle), not just the CSS declaration. */
   computedFamily: string;
   /** From document.fonts — a declared font-family alone does not prove the font loaded. */
