@@ -8,7 +8,7 @@
  * the whole point is that the three phases don't silently drift apart.
  */
 
-export type OutputType = "linkedin_image" | "one_pager_pdf" | "slide" | "post_copy";
+export type OutputType = "linkedin_image" | "x_image" | "instagram_image" | "one_pager_pdf" | "slide" | "post_copy";
 
 /**
  * One brief, as returned by Phase 2 and consumed by Phase 3 and Phase 4.

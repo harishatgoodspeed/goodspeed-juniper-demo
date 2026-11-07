@@ -59,10 +59,17 @@ export class BriefReferenceError extends Error {
   }
 }
 
-const OUTPUT_TYPES: OutputType[] = ["linkedin_image", "one_pager_pdf", "slide", "post_copy"];
+const OUTPUT_TYPES: OutputType[] = [
+  "linkedin_image",
+  "x_image",
+  "instagram_image",
+  "one_pager_pdf",
+  "slide",
+  "post_copy",
+];
 
 const BriefShape = z.object({
-  outputType: z.enum(["linkedin_image", "one_pager_pdf", "slide", "post_copy"]),
+  outputType: z.enum(["linkedin_image", "x_image", "instagram_image", "one_pager_pdf", "slide", "post_copy"]),
   purpose: z.string().min(1),
   audience: z.string().min(1),
   sourcedFactualCopy: z.array(z.string()),
@@ -77,7 +84,7 @@ const BriefShape = z.object({
 });
 
 const BriefsToolInput = z.object({
-  briefs: z.array(BriefShape).length(4),
+  briefs: z.array(BriefShape).length(OUTPUT_TYPES.length),
 });
 
 function systemPrompt(): string {
@@ -93,6 +100,8 @@ function systemPrompt(): string {
     "- sourcedFactualCopy and postCopyText (for the post_copy brief only) must contain only facts that are explicitly present in the brand description or page excerpt you are given. If a commercial fact (a price, a date, a metric, a partner name, a quote) is not explicitly given to you, do not invent a plausible-sounding one — put a note about the missing fact in that brief's unknowns array instead.",
     "- Never invent testimonials, review scores, or results.",
     "- Voice: write without exclamation points, matching any voice guidance you are given.",
+    '- "instagram_image" renders as a centred square post — keep its headline short (under ~8 words) since the layout has no room for a long wrapped heading.',
+    '- "x_image" and "linkedin_image" render as the same wide two-column layout at slightly different sizes — write each brief\'s copy for its own platform rather than duplicating the other verbatim.',
   ].join("\n");
 }
 

@@ -121,6 +121,44 @@ test("a region's sampled colour matches the expectedHex declared for it in the t
   }
 });
 
+test("x_image renders a real PNG at 1200x675 with every declared region matching its expectedHex", async () => {
+  const outDir = tmpOutDir();
+  const brief = makeBrief({ outputType: "x_image" });
+  const evidence = await renderOutput(brief, { logoPath: LOGO_PATH, imagePaths: [] }, outDir);
+
+  assert.equal(evidence.width, 1200);
+  assert.equal(evidence.height, 675);
+  const dims = readPngDimensions(evidence.filePath as string);
+  assert.deepEqual(dims, { width: 1200, height: 675 });
+
+  const png = PNG.sync.read(fs.readFileSync(evidence.filePath as string));
+  assert.ok(evidence.regions.length > 0);
+  for (const region of evidence.regions) {
+    const idx = (png.width * (region.y + Math.floor(region.height / 2)) + (region.x + Math.floor(region.width / 2))) << 2;
+    const observed = hex(png.data[idx], png.data[idx + 1], png.data[idx + 2]);
+    assert.equal(observed, (region.expectedHex as string).toLowerCase(), `region "${region.label}" colour mismatch`);
+  }
+});
+
+test("instagram_image renders a real, square 1080x1080 PNG with every declared region matching its expectedHex", async () => {
+  const outDir = tmpOutDir();
+  const brief = makeBrief({ outputType: "instagram_image", layoutDirection: "centred, text-only" });
+  const evidence = await renderOutput(brief, { logoPath: LOGO_PATH, imagePaths: [] }, outDir);
+
+  assert.equal(evidence.width, 1080);
+  assert.equal(evidence.height, 1080);
+  const dims = readPngDimensions(evidence.filePath as string);
+  assert.deepEqual(dims, { width: 1080, height: 1080 });
+
+  const png = PNG.sync.read(fs.readFileSync(evidence.filePath as string));
+  assert.ok(evidence.regions.length > 0);
+  for (const region of evidence.regions) {
+    const idx = (png.width * (region.y + Math.floor(region.height / 2)) + (region.x + Math.floor(region.width / 2))) << 2;
+    const observed = hex(png.data[idx], png.data[idx + 1], png.data[idx + 2]);
+    assert.equal(observed, (region.expectedHex as string).toLowerCase(), `region "${region.label}" colour mismatch`);
+  }
+});
+
 test("one_pager_pdf renders a real, valid, single-page PDF", async () => {
   const outDir = tmpOutDir();
   const brief = makeBrief({ outputType: "one_pager_pdf" });

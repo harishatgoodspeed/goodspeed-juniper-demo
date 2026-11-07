@@ -67,17 +67,23 @@ function mockClient(briefs: unknown[], usage = { input_tokens: 123, output_token
   };
 }
 
+function sixValidBriefs(overrides: Record<string, Record<string, unknown>> = {}) {
+  return [
+    validBrief("linkedin_image", overrides.linkedin_image),
+    validBrief("x_image", overrides.x_image),
+    validBrief("instagram_image", overrides.instagram_image),
+    validBrief("one_pager_pdf", overrides.one_pager_pdf),
+    validBrief("slide", overrides.slide),
+    validBrief("post_copy", overrides.post_copy),
+  ];
+}
+
 test("a valid mock response round-trips into a correctly-shaped BriefSet with real usage/timing", async () => {
-  const client = mockClient([
-    validBrief("linkedin_image"),
-    validBrief("one_pager_pdf"),
-    validBrief("slide"),
-    validBrief("post_copy"),
-  ]);
+  const client = mockClient(sixValidBriefs());
 
   const result = await generateBriefs(baseInput(), { client });
 
-  assert.equal(result.briefs.length, 4);
+  assert.equal(result.briefs.length, 6);
   assert.equal(result.promptTokens, 123);
   assert.equal(result.completionTokens, 456);
   assert.ok(result.elapsedMs >= 0);
@@ -85,56 +91,31 @@ test("a valid mock response round-trips into a correctly-shaped BriefSet with re
 });
 
 test("rejects a brief that invents a palette hex not in the approved context", async () => {
-  const client = mockClient([
-    validBrief("linkedin_image", { paletteTokenHexes: ["#FF00FF"] }), // not approved
-    validBrief("one_pager_pdf"),
-    validBrief("slide"),
-    validBrief("post_copy"),
-  ]);
+  const client = mockClient(sixValidBriefs({ linkedin_image: { paletteTokenHexes: ["#FF00FF"] } })); // not approved
 
   await assert.rejects(() => generateBriefs(baseInput(), { client }), BriefReferenceError);
 });
 
 test("rejects a brief that invents a font not in the approved context", async () => {
-  const client = mockClient([
-    validBrief("linkedin_image", { fontFamilies: ["Comic Sans MS"] }),
-    validBrief("one_pager_pdf"),
-    validBrief("slide"),
-    validBrief("post_copy"),
-  ]);
+  const client = mockClient(sixValidBriefs({ linkedin_image: { fontFamilies: ["Comic Sans MS"] } }));
 
   await assert.rejects(() => generateBriefs(baseInput(), { client }), BriefReferenceError);
 });
 
 test("rejects a brief that references a logo asset ID other than the approved one", async () => {
-  const client = mockClient([
-    validBrief("linkedin_image", { logoAssetId: "asset_some_other_logo" }),
-    validBrief("one_pager_pdf"),
-    validBrief("slide"),
-    validBrief("post_copy"),
-  ]);
+  const client = mockClient(sixValidBriefs({ linkedin_image: { logoAssetId: "asset_some_other_logo" } }));
 
   await assert.rejects(() => generateBriefs(baseInput(), { client }), BriefReferenceError);
 });
 
 test("rejects a brief with any imageAssetIds, since none are approved yet", async () => {
-  const client = mockClient([
-    validBrief("linkedin_image", { imageAssetIds: ["asset_random_image"] }),
-    validBrief("one_pager_pdf"),
-    validBrief("slide"),
-    validBrief("post_copy"),
-  ]);
+  const client = mockClient(sixValidBriefs({ linkedin_image: { imageAssetIds: ["asset_random_image"] } }));
 
   await assert.rejects(() => generateBriefs(baseInput(), { client }), BriefReferenceError);
 });
 
 test("accepts a brief with logoAssetId: null even when a logo was approved (model may choose not to use it)", async () => {
-  const client = mockClient([
-    validBrief("linkedin_image", { logoAssetId: null }),
-    validBrief("one_pager_pdf"),
-    validBrief("slide"),
-    validBrief("post_copy"),
-  ]);
+  const client = mockClient(sixValidBriefs({ linkedin_image: { logoAssetId: null } }));
   const result = await generateBriefs(baseInput(), { client });
   assert.equal(result.briefs[0].logoAssetId, null);
 });
@@ -142,20 +123,16 @@ test("accepts a brief with logoAssetId: null even when a logo was approved (mode
 test("rejects a response that fails Zod shape validation instead of silently coercing it", async () => {
   const client = mockClient([
     { outputType: "linkedin_image", purpose: "x" }, // missing required fields
-    validBrief("one_pager_pdf"),
-    validBrief("slide"),
-    validBrief("post_copy"),
+    ...sixValidBriefs().slice(1),
   ]);
 
   await assert.rejects(() => generateBriefs(baseInput(), { client }), BriefValidationError);
 });
 
-test("rejects a response missing one of the 4 required output types", async () => {
+test("rejects a response missing one of the required output types", async () => {
   const client = mockClient([
-    validBrief("linkedin_image"),
-    validBrief("one_pager_pdf"),
-    validBrief("slide"),
-    // no post_copy
+    ...sixValidBriefs().slice(0, 5),
+    // no post_copy — a duplicate slide instead
     validBrief("slide", { purpose: "duplicate slide instead of post_copy" }),
   ]);
 
@@ -163,12 +140,7 @@ test("rejects a response missing one of the 4 required output types", async () =
 });
 
 test("rejects a post_copy brief missing postCopyText", async () => {
-  const client = mockClient([
-    validBrief("linkedin_image"),
-    validBrief("one_pager_pdf"),
-    validBrief("slide"),
-    validBrief("post_copy", { postCopyText: undefined }),
-  ]);
+  const client = mockClient(sixValidBriefs({ post_copy: { postCopyText: undefined } }));
 
   await assert.rejects(() => generateBriefs(baseInput(), { client }), BriefValidationError);
 });

@@ -21,6 +21,8 @@ import type { Brief, RenderRegion } from "../pipeline-types";
 import { fontFaceCss, type ResolvedFontFace } from "./font-assets";
 
 export const LINKEDIN_IMAGE_DIMENSIONS = { width: 1200, height: 627 };
+export const X_IMAGE_DIMENSIONS = { width: 1200, height: 675 }; // X/Twitter's recommended 16:9 image crop
+export const INSTAGRAM_IMAGE_DIMENSIONS = { width: 1080, height: 1080 }; // square feed post
 export const ONE_PAGER_DIMENSIONS = { width: 794, height: 1123 }; // A4 @ 96dpi
 export const SLIDE_DIMENSIONS = { width: 1280, height: 720 }; // 16:9
 
@@ -195,11 +197,13 @@ function logoImgTag(logoUrl: string | null, style: string): string {
 }
 
 // ---------------------------------------------------------------------------
-// LinkedIn image — 1200x627
+// Wide social image — shared by LinkedIn (1200x627) and X (1200x675): same
+// two-column layout, same width, only the overall height (and so the
+// CTA/background sample points, which are anchored from the bottom) differs.
 // ---------------------------------------------------------------------------
 
-export function buildLinkedinImageTemplate(brief: Brief, assets: TemplateAssets): TemplateResult {
-  const { width, height } = LINKEDIN_IMAGE_DIMENSIONS;
+function buildWideSocialImageTemplate(brief: Brief, assets: TemplateAssets, dims: { width: number; height: number }): TemplateResult {
+  const { width, height } = dims;
   const palette = pickPalette(brief.paletteTokenHexes);
   const fonts = resolveFontRoles(brief.fontFamilies);
   const logoUrl = toLocalFileUrl(assets.logoPath);
@@ -258,8 +262,88 @@ ${fontFaceStyles(assets, [fonts.heading, fonts.body])}
     // The CTA label is left-aligned with 20px padding (see .cta above)
     // specifically so the button's right-hand portion stays a clean solid
     // fill — this sample point is chosen there, clear of any glyph.
-    { label: "cta-button", x: 230, y: 530, width: 40, height: 20, expectedHex: palette.accent, expectedHexApproved: palette.accentApproved },
-    { label: "background", x: 1140, y: 580, width: 40, height: 20, expectedHex: palette.bg, expectedHexApproved: palette.bgApproved },
+    { label: "cta-button", x: 230, y: height - 97, width: 40, height: 20, expectedHex: palette.accent, expectedHexApproved: palette.accentApproved },
+    { label: "background", x: 1140, y: height - 47, width: 40, height: 20, expectedHex: palette.bg, expectedHexApproved: palette.bgApproved },
+  ];
+
+  return {
+    html,
+    width,
+    height,
+    regions,
+    fontRoles: [
+      { role: "heading", expectedFamily: fonts.heading, expectedFamilyApproved: fonts.headingApproved },
+      { role: "body", expectedFamily: fonts.body, expectedFamilyApproved: fonts.bodyApproved },
+    ],
+  };
+}
+
+export function buildLinkedinImageTemplate(brief: Brief, assets: TemplateAssets): TemplateResult {
+  return buildWideSocialImageTemplate(brief, assets, LINKEDIN_IMAGE_DIMENSIONS);
+}
+
+export function buildXImageTemplate(brief: Brief, assets: TemplateAssets): TemplateResult {
+  return buildWideSocialImageTemplate(brief, assets, X_IMAGE_DIMENSIONS);
+}
+
+// ---------------------------------------------------------------------------
+// Instagram image — square (1080x1080), centred/stacked layout since the
+// LinkedIn/X two-column layout doesn't suit a square canvas.
+// ---------------------------------------------------------------------------
+
+export function buildInstagramImageTemplate(brief: Brief, assets: TemplateAssets): TemplateResult {
+  const { width, height } = INSTAGRAM_IMAGE_DIMENSIONS;
+  const palette = pickPalette(brief.paletteTokenHexes);
+  const fonts = resolveFontRoles(brief.fontFamilies);
+  const logoUrl = toLocalFileUrl(assets.logoPath);
+
+  const headline = escapeHtml(pickHeadline(brief));
+  const supporting = escapeHtml(pickSupportingLine(brief));
+
+  const ctaWidth = 260;
+  const ctaLeft = (width - ctaWidth) / 2;
+  const ctaTop = height - 160;
+
+  const html = `<!doctype html>
+<html>
+<head>
+<meta charset="utf-8" />
+<style>
+${baseStyles()}
+${fontFaceStyles(assets, [fonts.heading, fonts.body])}
+  .page {
+    width: ${width}px; height: ${height}px;
+    background: ${palette.bg};
+    font-family: ${bodyFontStack(fonts.body)};
+  }
+  .brand-bar { position: absolute; top: 0; left: 0; width: ${width}px; height: 56px; background: ${palette.primary}; }
+  .logo { position: absolute; top: 120px; left: 50%; transform: translateX(-50%); width: 150px; height: 150px; object-fit: contain; }
+  .heading { position: absolute; top: 340px; left: 110px; width: 860px; margin: 0;
+    font-family: ${headingFontStack(fonts.heading)}; font-size: 56px; line-height: 1.2; font-weight: 700;
+    color: ${palette.text}; text-align: center; }
+  .supporting { position: absolute; top: 560px; left: 150px; width: 780px;
+    font-size: 24px; line-height: 1.5; color: ${palette.text}; text-align: center; }
+  .cta { position: absolute; left: ${ctaLeft}px; top: ${ctaTop}px; width: ${ctaWidth}px; height: 68px; border-radius: 34px;
+    background: ${palette.accent}; color: ${palette.bg}; display: flex; align-items: center; justify-content: center;
+    font-size: 19px; font-weight: 600; font-family: ${bodyFontStack(fonts.body)}; }
+</style>
+</head>
+<body>
+  <div class="page" data-role="page">
+    <div class="brand-bar"></div>
+    ${logoImgTag(logoUrl, "position:absolute;top:120px;left:50%;transform:translateX(-50%);width:150px;height:150px;object-fit:contain;")}
+    <h1 class="heading" data-role="heading">${headline}</h1>
+    <p class="supporting" data-role="body">${supporting}</p>
+    <div class="cta">Learn more</div>
+  </div>
+</body>
+</html>`;
+
+  const regions: RenderRegion[] = [
+    { label: "brand-bar", x: width / 2 - 40, y: 20, width: 80, height: 16, expectedHex: palette.primary, expectedHexApproved: palette.primaryApproved },
+    // Sampled left of the centred CTA label, clear of any glyph.
+    { label: "cta-button", x: ctaLeft + 16, y: ctaTop + 24, width: 20, height: 16, expectedHex: palette.accent, expectedHexApproved: palette.accentApproved },
+    { label: "background", x: 40, y: height - 40, width: 40, height: 20, expectedHex: palette.bg, expectedHexApproved: palette.bgApproved },
   ];
 
   return {
@@ -442,6 +526,10 @@ export function buildTemplate(brief: Brief, assets: TemplateAssets): TemplateRes
   switch (brief.outputType) {
     case "linkedin_image":
       return buildLinkedinImageTemplate(brief, assets);
+    case "x_image":
+      return buildXImageTemplate(brief, assets);
+    case "instagram_image":
+      return buildInstagramImageTemplate(brief, assets);
     case "one_pager_pdf":
       return buildOnePagerTemplate(brief, assets);
     case "slide":

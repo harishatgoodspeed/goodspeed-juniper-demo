@@ -50,6 +50,8 @@ function statusLabel(status: string): string {
 function outputTypeLabel(type: string): string {
   const labels: Record<string, string> = {
     linkedin_image: "LinkedIn image",
+    x_image: "X image",
+    instagram_image: "Instagram image",
     one_pager_pdf: "One page PDF",
     slide: "Slide",
     post_copy: "Post copy",
