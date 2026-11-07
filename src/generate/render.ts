@@ -176,6 +176,12 @@ export async function renderOutput(brief: Brief, assets: RenderAssets, outDir: s
     try {
       const page = await context.newPage();
       await page.setContent(template.html, { waitUntil: "load" });
+      // Any @font-face declared from a real embedded font file (see
+      // font-assets.ts) must actually finish loading before we check or
+      // screenshot — document.fonts.ready still works via CDP evaluate even
+      // with javaScriptEnabled: false, same as the other evaluate() calls
+      // in this file (see the comment on isFontAvailable above).
+      await page.evaluate(() => document.fonts.ready);
 
       const fontChecks = await evaluateFontChecks(page, template.fontRoles);
       const logoCheck = await evaluateLogoCheck(page, brief);

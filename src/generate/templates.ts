@@ -18,6 +18,7 @@
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import type { Brief, RenderRegion } from "../pipeline-types";
+import { fontFaceCss, type ResolvedFontFace } from "./font-assets";
 
 export const LINKEDIN_IMAGE_DIMENSIONS = { width: 1200, height: 627 };
 export const ONE_PAGER_DIMENSIONS = { width: 794, height: 1123 }; // A4 @ 96dpi
@@ -34,6 +35,8 @@ export const SELECTORS = {
 export interface TemplateAssets {
   logoPath?: string;
   imagePaths: string[];
+  /** Real font files resolved for approved families (src/generate/font-assets.ts), keyed by family name. Absent or missing entries simply mean no real file could be fetched — the template still references the family by name, so the typography check fails honestly rather than silently. */
+  fontFaces?: Map<string, ResolvedFontFace>;
 }
 
 export interface FontRoleExpectation {
@@ -165,6 +168,15 @@ function pickBulletLines(brief: Brief): string[] {
   return rest.length > 0 ? rest : [brief.audience];
 }
 
+/** @font-face CSS for whichever of the heading/body families actually resolved to a real font file. */
+function fontFaceStyles(assets: TemplateAssets, families: string[]): string {
+  if (!assets.fontFaces) return "";
+  const faces = [...new Set(families)]
+    .map((family) => assets.fontFaces!.get(family))
+    .filter((face): face is ResolvedFontFace => Boolean(face));
+  return faces.length > 0 ? fontFaceCss(faces) : "";
+}
+
 function baseStyles(): string {
   // box-sizing: border-box keeps padded elements' declared width/height
   // exact, which matters for reasoning about the fixed-size `.page`
@@ -210,6 +222,7 @@ export function buildLinkedinImageTemplate(brief: Brief, assets: TemplateAssets)
 <meta charset="utf-8" />
 <style>
 ${baseStyles()}
+${fontFaceStyles(assets, [fonts.heading, fonts.body])}
   .page {
     width: ${width}px; height: ${height}px;
     background: ${palette.bg};
@@ -287,6 +300,7 @@ export function buildOnePagerTemplate(brief: Brief, assets: TemplateAssets): Tem
 <meta charset="utf-8" />
 <style>
 ${baseStyles()}
+${fontFaceStyles(assets, [fonts.heading, fonts.body])}
   /* Pins the PDF paper size to exactly our layout's pixel dimensions (one
      page) via Playwright's preferCSSPageSize, instead of relying only on
      the width/height passed to page.pdf(). */
@@ -372,6 +386,7 @@ export function buildSlideTemplate(brief: Brief, assets: TemplateAssets): Templa
 <meta charset="utf-8" />
 <style>
 ${baseStyles()}
+${fontFaceStyles(assets, [fonts.heading, fonts.body])}
   .page {
     width: ${width}px; height: ${height}px;
     background: ${palette.bg};

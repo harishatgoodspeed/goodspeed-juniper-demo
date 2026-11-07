@@ -6,13 +6,18 @@ import { getBrand, getSourceAsset } from "../brands";
 import { getRun, setRunStatus } from "../runs";
 import { createOutput, createReview, setOutputFailed, setOutputReady } from "../outputs";
 import { renderOutput as realRenderOutput, type RenderAssets } from "../generate/render";
+import { resolveFontFaces as realResolveFontFaces, type ResolvedFontFace } from "../generate/font-assets";
 import { reviewWithRepair } from "../review/repair";
 import { config } from "../config";
 import type { Brief, RenderEvidence } from "../pipeline-types";
+import type { BrandContext } from "../import/types";
+import type { ApprovedBrandContext } from "../llm";
 
 export interface RunGenerateJobDeps {
   /** Injectable for tests, so this never needs a real Chromium install to be exercised offline. */
   render?: (brief: Brief, assets: RenderAssets, outDir: string) => Promise<RenderEvidence>;
+  /** Injectable for tests, so this never needs real network access to Google Fonts / the brand's own site. */
+  resolveFontFaces?: (families: string[], rawContext: BrandContext) => Promise<Map<string, ResolvedFontFace>>;
 }
 
 /**
@@ -28,6 +33,7 @@ export interface RunGenerateJobDeps {
  */
 export async function runGenerateJob(db: Database.Database, job: JobRow, deps: RunGenerateJobDeps = {}): Promise<void> {
   const render = deps.render ?? realRenderOutput;
+  const resolveFontFaces = deps.resolveFontFaces ?? realResolveFontFaces;
 
   if (!job.run_id) throw new Error("Generate job has no run_id");
   const run = getRun(db, job.run_id);
@@ -39,9 +45,17 @@ export async function runGenerateJob(db: Database.Database, job: JobRow, deps: R
 
   setRunStatus(db, run.id, "generating");
 
-  const approved = JSON.parse(brand.approved_context_json) as { logoAssetId: string | null };
+  const approved = JSON.parse(brand.approved_context_json) as ApprovedBrandContext;
   const logoAsset = approved.logoAssetId ? getSourceAsset(db, approved.logoAssetId) : undefined;
-  const assets: RenderAssets = { logoPath: logoAsset?.local_path ?? undefined, imagePaths: [] };
+
+  // Real font files for whichever approved families we can actually fetch —
+  // resolved once per run (not per-brief/per-repair-attempt) since every
+  // brief in a run shares the same approved fonts.
+  const fontFaces = brand.context_json
+    ? await resolveFontFaces(approved.fonts, JSON.parse(brand.context_json) as BrandContext)
+    : new Map<string, ResolvedFontFace>();
+
+  const assets: RenderAssets = { logoPath: logoAsset?.local_path ?? undefined, imagePaths: [], fontFaces };
 
   const outDir = path.join(config.ASSET_DIR, "brands", brand.id, "outputs", run.id);
   fs.mkdirSync(outDir, { recursive: true });
