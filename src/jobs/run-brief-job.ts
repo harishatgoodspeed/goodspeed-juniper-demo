@@ -1,0 +1,44 @@
+import type Database from "better-sqlite3";
+import type { JobRow } from "../jobs";
+import { getBrand } from "../brands";
+import { getRun, setRunBriefs, setRunStatus } from "../runs";
+import { generateBriefs as realGenerateBriefs, type ApprovedBrandContext } from "../llm";
+import type { BrandContext } from "../import/types";
+
+export interface RunBriefJobDeps {
+  /** Injectable for tests, so this handler never needs a real ANTHROPIC_API_KEY to be exercised offline. */
+  generateBriefs?: typeof realGenerateBriefs;
+}
+
+export async function runBriefJob(db: Database.Database, job: JobRow, deps: RunBriefJobDeps = {}): Promise<void> {
+  const generateBriefs = deps.generateBriefs ?? realGenerateBriefs;
+  if (!job.run_id) throw new Error("Brief job has no run_id");
+  const run = getRun(db, job.run_id);
+  if (!run) throw new Error(`Run ${job.run_id} not found`);
+
+  const brand = getBrand(db, run.brand_id);
+  if (!brand) throw new Error(`Brand ${run.brand_id} not found`);
+  if (!brand.context_json) throw new Error(`Brand ${brand.id} has no imported context yet`);
+  if (!brand.approved_context_json) throw new Error(`Brand ${brand.id} has no approved context yet`);
+
+  setRunStatus(db, run.id, "briefing");
+
+  try {
+    const rawContext = JSON.parse(brand.context_json) as BrandContext;
+    const context = JSON.parse(brand.approved_context_json) as ApprovedBrandContext;
+
+    const briefSet = await generateBriefs({ context, rawContext, task: run.task, preset: run.preset ?? undefined });
+
+    setRunBriefs(db, run.id, {
+      briefsJson: JSON.stringify(briefSet.briefs),
+      unknownsJson: JSON.stringify(briefSet.briefs.flatMap((b) => b.unknowns)),
+      model: briefSet.model,
+      promptTokens: briefSet.promptTokens,
+      completionTokens: briefSet.completionTokens,
+      elapsedMs: briefSet.elapsedMs,
+    });
+  } catch (err) {
+    setRunStatus(db, run.id, "failed");
+    throw err;
+  }
+}
