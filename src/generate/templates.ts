@@ -233,9 +233,9 @@ ${fontFaceStyles(assets, [fonts.heading, fonts.body])}
     font-family: ${bodyFontStack(fonts.body)};
   }
   .brand-bar { position: absolute; top: 0; left: 0; width: ${width}px; height: 48px; background: ${palette.primary}; }
-  .logo { position: absolute; top: 80px; left: 64px; width: 140px; height: 140px; object-fit: contain; }
+  .logo { position: absolute; top: 64px; left: 64px; width: 64px; height: 64px; object-fit: contain; }
   .supporting-image { position: absolute; top: 100px; left: ${imageLeft}px; width: 520px; height: 380px; object-fit: cover; border-radius: 12px; border: 4px solid ${palette.accent}; }
-  .heading { position: absolute; top: 110px; left: ${textLeft}px; width: ${textWidth}px; margin: 0;
+  .heading { position: absolute; top: 150px; left: ${textLeft}px; width: ${textWidth}px; margin: 0;
     font-family: ${headingFontStack(fonts.heading)}; font-size: 50px; line-height: 1.15; font-weight: 700;
     color: ${palette.text}; text-align: ${textAlign}; }
   .supporting { position: absolute; top: 300px; left: ${textLeft}px; width: ${textWidth}px;
@@ -248,7 +248,7 @@ ${fontFaceStyles(assets, [fonts.heading, fonts.body])}
 <body>
   <div class="page" data-role="page">
     <div class="brand-bar"></div>
-    ${logoImgTag(logoUrl, "position:absolute;top:80px;left:64px;width:140px;height:140px;object-fit:contain;")}
+    ${logoImgTag(logoUrl, "position:absolute;top:64px;left:64px;width:64px;height:64px;object-fit:contain;")}
     ${hasImage ? `<img class="supporting-image" src="${escapeHtml(imageUrl as string)}" alt="" />` : ""}
     <h1 class="heading" data-role="heading">${headline}</h1>
     <p class="supporting" data-role="body">${supporting}</p>

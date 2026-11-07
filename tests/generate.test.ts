@@ -76,6 +76,16 @@ test("linkedin_image renders a real PNG at the template's declared resolution", 
   assert.ok(evidence.logoCheck);
   assert.equal(evidence.logoCheck?.rendered, true);
   assert.equal(evidence.logoCheck?.boundingBoxNonEmpty, true);
+  // Real fidelity, beyond presence: the browser actually decoded image data,
+  // and an independent reference render of the same file matches almost
+  // exactly (same file/engine/box — only true if the pipeline genuinely
+  // re-renders and compares, not a fabricated score).
+  assert.ok((evidence.logoCheck?.naturalWidth ?? 0) > 0, "logo must have actually decoded real image data");
+  assert.ok((evidence.logoCheck?.naturalHeight ?? 0) > 0);
+  assert.ok(
+    (evidence.logoCheck?.similarity ?? 0) > 0.95,
+    `expected near-identical pixel similarity against the reference render, got ${evidence.logoCheck?.similarity}`
+  );
 
   // Real font checks: one per role, read back from the rendered DOM.
   const roles = evidence.fontChecks.map((f) => f.role).sort();

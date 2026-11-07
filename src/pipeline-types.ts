@@ -80,8 +80,20 @@ export interface LogoCheckEvidence {
   expectedAssetId: string | null;
   /** The logo element was present in the rendered output at all. */
   rendered: boolean;
-  /** Non-empty bounding box — a presence check, not proof of exact visual fidelity. */
+  /** Non-empty CSS bounding box. Every template sets an explicit width/height on the logo element, so this alone is true even when the image never actually decoded — see naturalWidth/naturalHeight for that. */
   boundingBoxNonEmpty: boolean;
+  /** The image's actual decoded pixel dimensions (HTMLImageElement.naturalWidth/Height). Zero means the browser never decoded real image data from the src — a broken file, a 404, or a corrupt asset — even though boundingBoxNonEmpty is still true. */
+  naturalWidth: number;
+  naturalHeight: number;
+  /**
+   * Real visual fidelity, beyond presence: 0-1 pixel similarity between the
+   * rendered logo region and a fresh, independent reference render of the
+   * *same* approved asset file at the same box size/background (see
+   * src/generate/logo-fidelity.ts). Null when it couldn't be computed (e.g.
+   * no render evidence, or the image never decoded in the main render) —
+   * never a fabricated score.
+   */
+  similarity: number | null;
 }
 
 /**

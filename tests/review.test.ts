@@ -146,13 +146,70 @@ test("logo: approved logo set but no render evidence is not_verified, never pass
   assert.equal(logo?.status, "not_verified");
 });
 
-test("logo: rendered with a non-empty bounding box passes", async () => {
+test("logo: decoded with high pixel similarity against the reference render passes", async () => {
   const evidence = fixtureEvidence({
-    logoCheck: { expectedAssetId: "asset_logo_1", rendered: true, boundingBoxNonEmpty: true },
+    logoCheck: {
+      expectedAssetId: "asset_logo_1",
+      rendered: true,
+      boundingBoxNonEmpty: true,
+      naturalWidth: 140,
+      naturalHeight: 140,
+      similarity: 0.999,
+    },
   });
   const result = await reviewOutput(evidence, fixtureBrief({ logoAssetId: "asset_logo_1" }));
   const logo = result.checks.find((c) => c.kind === "logo");
   assert.equal(logo?.status, "pass");
+});
+
+test("logo: a non-empty CSS box with naturalWidth/Height of 0 fails — proves the image never actually decoded, never a fabricated pass from presence alone", async () => {
+  const evidence = fixtureEvidence({
+    logoCheck: {
+      expectedAssetId: "asset_logo_1",
+      rendered: true,
+      boundingBoxNonEmpty: true,
+      naturalWidth: 0,
+      naturalHeight: 0,
+      similarity: null,
+    },
+  });
+  const result = await reviewOutput(evidence, fixtureBrief({ logoAssetId: "asset_logo_1" }));
+  const logo = result.checks.find((c) => c.kind === "logo");
+  assert.equal(logo?.status, "fail");
+  assert.match(logo!.explanation, /never decoded/);
+});
+
+test("logo: decoded but similarity could not be computed against a reference render is not_verified, never pass", async () => {
+  const evidence = fixtureEvidence({
+    logoCheck: {
+      expectedAssetId: "asset_logo_1",
+      rendered: true,
+      boundingBoxNonEmpty: true,
+      naturalWidth: 140,
+      naturalHeight: 140,
+      similarity: null,
+    },
+  });
+  const result = await reviewOutput(evidence, fixtureBrief({ logoAssetId: "asset_logo_1" }));
+  const logo = result.checks.find((c) => c.kind === "logo");
+  assert.equal(logo?.status, "not_verified");
+});
+
+test("logo: decoded but visually different from the reference render fails — real fidelity, not just presence", async () => {
+  const evidence = fixtureEvidence({
+    logoCheck: {
+      expectedAssetId: "asset_logo_1",
+      rendered: true,
+      boundingBoxNonEmpty: true,
+      naturalWidth: 140,
+      naturalHeight: 140,
+      similarity: 0.2,
+    },
+  });
+  const result = await reviewOutput(evidence, fixtureBrief({ logoAssetId: "asset_logo_1" }));
+  const logo = result.checks.find((c) => c.kind === "logo");
+  assert.equal(logo?.status, "fail");
+  assert.match(logo!.explanation, /does not visually match/);
 });
 
 test("copy: non-post_copy outputs are not_applicable", async () => {

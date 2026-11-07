@@ -34,6 +34,11 @@ const schema = z.object({
   DAILY_RUN_LIMIT: z.coerce.number().int().positive().default(20),
   MAX_RUN_TOKENS: z.coerce.number().int().positive().default(20000),
   COLOUR_DELTA_E_THRESHOLD: z.coerce.number().positive().default(4),
+  // How closely a rendered logo must match a fresh reference render of the
+  // same approved file (src/generate/logo-fidelity.ts) to pass, 0-1. Same
+  // file/engine/box should render at ~1.0; this just leaves headroom for
+  // anti-aliasing, never for a genuinely different asset.
+  LOGO_SIMILARITY_THRESHOLD: z.coerce.number().min(0).max(1).default(0.9),
   RETENTION_DAYS: z.coerce.number().int().positive().default(30),
 
   // PLACEHOLDER values — tune once real free-tool traffic/cost data exists.
