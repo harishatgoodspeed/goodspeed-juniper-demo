@@ -27,13 +27,13 @@ export function buildBrandMarkdown(input: SnapshotInput): string {
   const title = rawContext.title?.trim() || new URL(sourceUrl).hostname;
 
   const lines: string[] = [];
-  lines.push(`# ${title} — brand snapshot`);
+  lines.push(`# ${title}: brand snapshot`);
   lines.push("");
   lines.push(`Source: ${sourceUrl}`);
   lines.push(`Generated: ${new Date().toISOString().slice(0, 10)}`);
   lines.push("");
   lines.push(
-    "This file states only what was approved or directly extracted from the site above — nothing here is invented. Paste it into Claude, ChatGPT or any agent as brand context."
+    "This file states only what was approved or directly extracted from the site above. Nothing here is invented. Paste it into Claude, ChatGPT or any agent as brand context."
   );
   lines.push("");
 
@@ -65,13 +65,13 @@ export function buildBrandMarkdown(input: SnapshotInput): string {
 
   lines.push("## Voice");
   lines.push("");
-  lines.push(approvedContext.voiceNotes || "No voice guidance was given — write in a plain, confident tone and avoid exclamation points unless told otherwise.");
+  lines.push(approvedContext.voiceNotes || "No voice guidance was given. Write in a plain, confident tone and avoid exclamation points unless told otherwise.");
   lines.push("");
 
   lines.push("## What this brand actually says about itself");
   lines.push("");
   lines.push(
-    rawContext.description?.trim() || "No description was extracted — do not invent a summary of what this company does."
+    rawContext.description?.trim() || "No description was extracted. Do not invent a summary of what this company does."
   );
   if (rawContext.textExcerpt.trim()) {
     lines.push("");

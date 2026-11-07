@@ -147,8 +147,10 @@
     currentBrandId = brandId;
     const data = await api(`/api/brands/${brandId}`);
     renderResult(data);
+    document.getElementById("snapshotLink").href = `/api/brands/${brandId}/snapshot.md`;
     show(views.result);
     document.getElementById("runResult").innerHTML = "";
+    document.getElementById("uploadCheckResult").innerHTML = "";
     document.getElementById("shareReveal").hidden = true;
     await loadShares(brandId);
   }
@@ -197,6 +199,15 @@
     } else {
       selectedLogoId = "none";
     }
+    document.getElementById("voiceNotes").value = (approvedAlready && approvedAlready.voiceNotes) || "";
+    const approvedColours = new Set((approvedAlready && approvedAlready.colours) || []);
+    const approvedFonts = new Set((approvedAlready && approvedAlready.fonts) || []);
+    document.querySelectorAll(".colour-approve").forEach((i) => {
+      i.checked = approvedColours.has(i.value);
+    });
+    document.querySelectorAll(".font-approve").forEach((i) => {
+      i.checked = approvedFonts.has(i.value);
+    });
   }
 
   function renderLogoCandidates(data) {
@@ -218,7 +229,7 @@
         const img = el("img", { src: `/api/assets/${asset.id}`, alt: `${cand.kind} candidate` });
         card.appendChild(img);
       } else {
-        card.appendChild(el("p", { className: "hint", textContent: "Not downloaded (inline SVG — needs manual review)." }));
+        card.appendChild(el("p", { className: "hint", textContent: "Not downloaded (inline SVG, needs manual review)." }));
       }
       card.appendChild(el("div", { className: "meta-row" }, [
         el("span", { textContent: cand.kind }),
@@ -300,7 +311,7 @@
     }
     assets.forEach((a) => {
       const li = el("li");
-      const label = el("span", { textContent: `${a.kind} — ${a.origin_url}` });
+      const label = el("span", { textContent: `${a.kind}: ${a.origin_url}` });
       const link = el("a", { href: `/api/assets/${a.id}`, target: "_blank", rel: "noopener", textContent: "open" });
       li.appendChild(label);
       li.appendChild(link);
@@ -312,6 +323,7 @@
     const approveStatus = document.getElementById("approveStatus");
     const colours = Array.from(document.querySelectorAll(".colour-approve:checked")).map((i) => i.value);
     const fonts = Array.from(document.querySelectorAll(".font-approve:checked")).map((i) => i.value);
+    const voiceNotes = document.getElementById("voiceNotes").value.trim();
     try {
       await api(`/api/brands/${currentBrandId}`, {
         method: "PATCH",
@@ -320,6 +332,7 @@
             logoAssetId: selectedLogoId === "none" ? null : selectedLogoId,
             colours,
             fonts,
+            voiceNotes,
           },
         }),
       });
@@ -349,7 +362,7 @@
       runStatus.hidden = false;
       runStatusText.textContent = "Queued.";
       await pollRunJob(jobId);
-      await renderRunResult(run.id);
+      await pollRunUntilDone(run.id);
     } catch (err) {
       runError.textContent = err.message;
       runError.hidden = false;
@@ -381,8 +394,146 @@
     });
   }
 
+  const POST_TYPES = ["linkedin_image", "instagram_image", "x_image", "post_copy"];
+  const OUTPUT_TYPE_LABELS = {
+    linkedin_image: "LinkedIn image",
+    instagram_image: "Instagram image",
+    x_image: "X image",
+    post_copy: "Post caption",
+    one_pager_pdf: "One page PDF",
+    slide: "Slide",
+  };
+  const LABEL_CLASS = {
+    "Brand approved": "label-approved",
+    Draft: "label-draft",
+    "Needs review": "label-needs-review",
+  };
+
+  function renderOutputCard(o) {
+    const card = el("div", { className: "candidate-card output-card" });
+    card.appendChild(
+      el("div", { className: "meta-row" }, [
+        el("span", { textContent: OUTPUT_TYPE_LABELS[o.type] || o.type }),
+        el("span", { className: `label-chip ${LABEL_CLASS[o.label] || ""}`, textContent: o.label }),
+      ])
+    );
+    if (o.status === "pending") {
+      card.appendChild(el("p", { className: "hint", textContent: "Still working on this one." }));
+    } else if (o.status === "failed") {
+      card.appendChild(el("p", { className: "hint", textContent: "This one could not be rendered." }));
+    } else if (o.type === "post_copy") {
+      card.appendChild(el("p", { textContent: (o.brief && o.brief.postCopyText) || "" }));
+    } else if (o.type !== "one_pager_pdf") {
+      card.appendChild(
+        el("img", { src: `/api/outputs/${o.id}/file`, alt: OUTPUT_TYPE_LABELS[o.type] || o.type, loading: "lazy" })
+      );
+    }
+    if (o.status === "ready" && o.type !== "post_copy") {
+      card.appendChild(
+        el("a", { href: `/api/outputs/${o.id}/file`, target: "_blank", rel: "noopener", textContent: "Download, full resolution, no watermark" })
+      );
+    }
+    return card;
+  }
+
+  function renderUpsellPanel() {
+    const panel = el("div", { className: "upsell-panel" });
+    panel.appendChild(el("h2", { textContent: "Want this built into your tools" }));
+    panel.appendChild(
+      el("p", { className: "hint", textContent: "Everything above is yours to keep, free. If you want it built properly, here is what Goodspeed offers next." })
+    );
+    const tiers = el("div", { className: "card-grid" }, [
+      el("div", { className: "upsell-tier" }, [
+        el("h3", { textContent: "Free starter" }),
+        el("p", { textContent: "A starter set like this, delivered in 24 to 48 hours, still free." }),
+      ]),
+      el("div", { className: "upsell-tier" }, [
+        el("h3", { textContent: "Built into your tools" }),
+        el("p", { textContent: "A full set built directly into Canva, Gamma, Google Slides or Figma, ready for your team to use." }),
+      ]),
+      el("div", { className: "upsell-tier" }, [
+        el("h3", { textContent: "Ongoing upkeep" }),
+        el("p", { textContent: "We keep your brand assets current as your brand evolves, month to month." }),
+      ]),
+    ]);
+    panel.appendChild(tiers);
+    panel.appendChild(
+      el("a", { className: "btn btn-primary", href: "https://goodspeed.studio/contact", target: "_blank", rel: "noopener", textContent: "Talk to Goodspeed" })
+    );
+    return panel;
+  }
+
+  function renderLeadForm(brandId) {
+    const wrap = el("div", { className: "lead-form" });
+    wrap.appendChild(el("h2", { textContent: "Want a call about the paid build" }));
+    wrap.appendChild(el("p", { className: "hint", textContent: "Optional. Leave your email and we will reach out. No spam, no account needed." }));
+    const form = el("form", { className: "stack" });
+    const email = el("input", { type: "email", name: "email", placeholder: "you@example.com", required: true, ariaLabel: "Email address" });
+    const tool = el("input", { type: "text", name: "preferredTool", placeholder: "Preferred tool, e.g. Figma, Canva, Slides (optional)", ariaLabel: "Preferred tool" });
+    const notes = el("textarea", { name: "notes", rows: 2, placeholder: "Anything about your brand we should know (optional)", ariaLabel: "Notes" });
+    const consentLabel = el("label", { className: "hint" });
+    const consentInput = el("input", { type: "checkbox", required: true });
+    consentLabel.appendChild(consentInput);
+    consentLabel.appendChild(document.createTextNode(" I am happy for Goodspeed to contact me about this."));
+    const submit = el("button", { type: "submit", className: "btn btn-primary", textContent: "Send" });
+    const status = el("p", { className: "hint" });
+    form.appendChild(email);
+    form.appendChild(tool);
+    form.appendChild(notes);
+    form.appendChild(consentLabel);
+    form.appendChild(submit);
+    form.appendChild(status);
+    form.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      submit.disabled = true;
+      try {
+        await api(`/api/brands/${brandId}/leads`, {
+          method: "POST",
+          body: JSON.stringify({ email: email.value.trim(), preferredTool: tool.value.trim(), notes: notes.value.trim(), consent: consentInput.checked }),
+        });
+        form.hidden = true;
+        status.hidden = false;
+        wrap.appendChild(el("p", { textContent: "Thank you. We will be in touch." }));
+      } catch (err) {
+        status.textContent = err.message;
+      } finally {
+        submit.disabled = false;
+      }
+    });
+    wrap.appendChild(form);
+    return wrap;
+  }
+
   async function renderRunResult(runId) {
     const run = await api(`/api/runs/${runId}`);
+    renderRunFromData(run);
+    return run;
+  }
+
+  const RUN_TERMINAL_STATUSES = ["completed", "partial", "failed"];
+
+  /** The brief job (what pollRunJob below tracks) finishing doesn't mean the run is done — rendering/reviewing each output happens in a separate job straight after. Poll the run itself until it reaches a terminal status, redrawing outputs as they go from pending to ready. */
+  function pollRunUntilDone(runId) {
+    return new Promise((resolve, reject) => {
+      const tick = async () => {
+        try {
+          const run = await api(`/api/runs/${runId}`);
+          runStatusText.textContent = `Run status: ${run.status}`;
+          renderRunFromData(run);
+          if (RUN_TERMINAL_STATUSES.includes(run.status)) {
+            resolve(run);
+          } else {
+            setTimeout(tick, 1500);
+          }
+        } catch (err) {
+          reject(err);
+        }
+      };
+      tick();
+    });
+  }
+
+  function renderRunFromData(run) {
     const container = document.getElementById("runResult");
     container.innerHTML = "";
     container.appendChild(el("p", { textContent: `Run status: ${run.status}` }));
@@ -390,15 +541,89 @@
       container.appendChild(el("p", { className: "hint", textContent: "No outputs yet." }));
       return;
     }
-    run.outputs.forEach((o) => {
-      const row = el("div", { className: "brand-row" });
-      row.appendChild(el("span", { textContent: `${o.type}: ${o.status}` }));
-      if (o.status === "ready") {
-        row.appendChild(el("a", { href: `/api/outputs/${o.id}/file`, target: "_blank", rel: "noopener", textContent: "open" }));
-      }
-      container.appendChild(row);
+
+    const posts = run.outputs.filter((o) => POST_TYPES.includes(o.type));
+    const moreFormats = run.outputs.filter((o) => !POST_TYPES.includes(o.type));
+
+    const grid = el("div", { className: "card-grid" });
+    posts.forEach((o) => grid.appendChild(renderOutputCard(o)));
+    container.appendChild(grid);
+
+    if (moreFormats.length > 0) {
+      const details = document.createElement("details");
+      details.className = "more-formats";
+      const summary = document.createElement("summary");
+      summary.textContent = "More formats (one page PDF, slide)";
+      details.appendChild(summary);
+      const moreGrid = el("div", { className: "card-grid" });
+      moreFormats.forEach((o) => moreGrid.appendChild(renderOutputCard(o)));
+      details.appendChild(moreGrid);
+      container.appendChild(details);
+    }
+
+    if (run.status === "completed" || run.status === "partial") {
+      container.appendChild(renderUpsellPanel());
+      container.appendChild(renderLeadForm(run.brandId));
+    }
+  }
+
+  // --- Upload-and-check ---
+  function readFileAsBase64(file) {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => {
+        const result = reader.result || "";
+        const commaIndex = result.indexOf(",");
+        resolve(commaIndex >= 0 ? result.slice(commaIndex + 1) : result);
+      };
+      reader.onerror = () => reject(new Error("Could not read the file."));
+      reader.readAsDataURL(file);
     });
   }
+
+  const uploadCheckForm = document.getElementById("uploadCheckForm");
+  const uploadCheckError = document.getElementById("uploadCheckError");
+
+  uploadCheckForm.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    uploadCheckError.hidden = true;
+    const fileInput = document.getElementById("uploadCheckFile");
+    const file = fileInput.files && fileInput.files[0];
+    const resultBox = document.getElementById("uploadCheckResult");
+    resultBox.innerHTML = "";
+    if (!file) return;
+    const submitBtn = uploadCheckForm.querySelector("button[type=submit]");
+    submitBtn.disabled = true;
+    try {
+      const imageBase64 = await readFileAsBase64(file);
+      const result = await api(`/api/brands/${currentBrandId}/check-upload`, {
+        method: "POST",
+        body: JSON.stringify({ mimeType: file.type, imageBase64 }),
+      });
+      resultBox.appendChild(
+        el("p", { className: "hint", textContent: `Found ${result.foundCount} of ${result.totalApproved} approved colours in this image, colour only.` })
+      );
+      const grid = el("div", { className: "card-grid" });
+      result.matches.forEach((m) => {
+        const card = el("div", { className: "candidate-card" });
+        card.appendChild(el("div", { className: "swatch", style: `background:${m.approvedHex}` }));
+        card.appendChild(
+          el("div", { className: "meta-row" }, [
+            el("span", { textContent: m.approvedHex }),
+            el("span", { className: m.found ? "label-chip label-approved" : "label-chip label-draft", textContent: m.found ? "Found" : "Not found" }),
+          ])
+        );
+        card.appendChild(el("p", { className: "hint", textContent: `Closest colour in image: ${m.closestObservedHex}` }));
+        grid.appendChild(card);
+      });
+      resultBox.appendChild(grid);
+    } catch (err) {
+      uploadCheckError.textContent = err.message;
+      uploadCheckError.hidden = false;
+    } finally {
+      submitBtn.disabled = false;
+    }
+  });
 
   // --- Sharing ---
   async function loadShares(brandId) {

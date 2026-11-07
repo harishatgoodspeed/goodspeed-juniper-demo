@@ -51,7 +51,7 @@ test("never invents a description or excerpt when none was extracted", () => {
     rawContext: rawContext({ description: null, textExcerpt: "" }),
     approvedContext: approved(),
   });
-  assert.match(md, /No description was extracted — do not invent/);
+  assert.match(md, /No description was extracted\. Do not invent/);
   assert.ok(!md.includes("Readable copy excerpt"), "must not print an excerpt section when there is no excerpt");
 });
 
@@ -94,5 +94,5 @@ test("falls back to the hostname when no title was extracted", () => {
     rawContext: rawContext({ title: null }),
     approvedContext: approved(),
   });
-  assert.match(md, /^# example\.com — brand snapshot/);
+  assert.match(md, /^# example\.com: brand snapshot/);
 });

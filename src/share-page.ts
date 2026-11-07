@@ -196,7 +196,7 @@ function renderOutputsSection(outputs: ShareOutputView[], token: string | null, 
           <span class="status-chip ${esc(approval.chipClass)}" role="status">${esc(approval.text)}</span>
         </summary>
         <div class="output-body">
-          ${needsReview ? `<p class="muted">The approved brand has changed since this was generated — it needs a fresh run to carry the current colours, fonts and voice.</p>` : ""}
+          ${needsReview ? `<p class="muted">The approved brand has changed since this was generated. It needs a fresh run to carry the current colours, fonts and voice.</p>` : ""}
           ${renderOutputPreview(output, token)}
           <h4>Review</h4>
           ${renderChecks(reviews)}
@@ -229,7 +229,7 @@ export function renderSharePage(data: SharePageData): string {
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="robots" content="noindex, nofollow">
-<title>${esc(title)} — Goodspeed Brand OS</title>
+<title>${esc(title)}: Goodspeed Brand OS</title>
 <style>
   :root { color-scheme: light; }
   * { box-sizing: border-box; }
