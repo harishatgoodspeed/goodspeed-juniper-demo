@@ -18,6 +18,11 @@
     });
     const heading = $(id).querySelector("h1");
     if (heading) heading.focus();
+    if (id !== "progressView") stopExtractClock();
+    if (id === "urlView") {
+      const submit = $("importForm") && $("importForm").querySelector("button[type=submit]");
+      if (submit) submit.disabled = false;
+    }
   }
   function csrf() {
     const match = document.cookie.match(/(?:^|; )gs_csrf=([^;]+)/);
@@ -56,6 +61,67 @@
     return "Reading your website";
   }
 
+  const EXTRACT_KEY = "gs-extract-job";
+  let extractTick = null;
+
+  function rememberExtract(id, jobId, url) {
+    try { sessionStorage.setItem(EXTRACT_KEY, JSON.stringify({ brandId: id, jobId, url })); } catch (err) { /* private mode */ }
+  }
+  function recallExtract() {
+    try {
+      const raw = sessionStorage.getItem(EXTRACT_KEY);
+      return raw ? JSON.parse(raw) : null;
+    } catch (err) {
+      return null;
+    }
+  }
+  function forgetExtract() {
+    try { sessionStorage.removeItem(EXTRACT_KEY); } catch (err) { /* private mode */ }
+  }
+  function startExtractClock(url) {
+    const started = Date.now();
+    const urlEl = $("extractUrl");
+    if (urlEl) urlEl.textContent = url || "";
+    const clock = $("extractClock");
+    const paint = () => {
+      if (!clock) return;
+      const seconds = Math.max(0, Math.floor((Date.now() - started) / 1000));
+      clock.textContent = seconds === 1 ? "1 second" : seconds + " seconds";
+    };
+    paint();
+    if (extractTick) clearInterval(extractTick);
+    extractTick = setInterval(paint, 1000);
+  }
+  function stopExtractClock() {
+    if (extractTick) clearInterval(extractTick);
+    extractTick = null;
+  }
+  function renderExtractProgress(progress) {
+    const finding = progress === "finding_brand";
+    document.querySelectorAll("#extractSteps li").forEach((li) => {
+      const step = li.getAttribute("data-step");
+      let state = "waiting";
+      if (step === "reading_website") state = finding ? "done" : "active";
+      if (step === "finding_brand") state = finding ? "active" : "waiting";
+      li.setAttribute("data-state", state);
+      if (state === "active") li.setAttribute("aria-current", "step");
+      else li.removeAttribute("aria-current");
+    });
+    const detail = $("extractDetail");
+    if (detail) {
+      detail.textContent = finding
+        ? "Reading colours, type, and the logo."
+        : "Fetching the public page.";
+    }
+    if ($("progressText")) $("progressText").textContent = progressCopy(progress, "import");
+  }
+  function settleExtractSteps() {
+    document.querySelectorAll("#extractSteps li").forEach((li) => {
+      li.setAttribute("data-state", "waiting");
+      li.removeAttribute("aria-current");
+    });
+  }
+
   async function pollJob(jobId, onTick) {
     for (;;) {
       const job = await api("/api/jobs/" + jobId);
@@ -69,28 +135,43 @@
     event.preventDefault();
     $("importError").hidden = true;
     const url = $("siteUrl").value.trim();
+    const submit = event.submitter || $("importForm").querySelector("button[type=submit]");
+    if (submit) submit.disabled = true;
     try {
       const started = await api("/api/brands", { method: "POST", body: JSON.stringify({ url }) });
       brandId = started.brand.id;
+      rememberExtract(brandId, started.jobId, url);
       show("progressView");
       $("blockedBox").hidden = true;
-      $("progressText").textContent = "Reading your website";
+      startExtractClock(url);
+      renderExtractProgress("reading_website");
       const job = await pollJob(started.jobId, (current) => {
-        $("progressText").textContent = progressCopy(current.progress, current.phase);
+        renderExtractProgress(current.progress);
       });
       if (job.status === "failed") return showBlocked();
+      forgetExtract();
+      stopExtractClock();
       await openBrand();
     } catch (err) {
+      if (submit) submit.disabled = false;
+      stopExtractClock();
       $("importError").hidden = false;
       $("importError").textContent = err.message;
+      if ($("progressView").hidden) return;
+      show("urlView");
     }
   });
 
   async function showBlocked() {
+    stopExtractClock();
+    forgetExtract();
     const data = await api("/api/brands/" + brandId);
     $("blockedBox").hidden = false;
     $("blockedText").textContent = data.error || "We could not read that address. Try again, correct the URL, or enter a short description.";
     $("progressText").textContent = "The import stopped";
+    settleExtractSteps();
+    const detail = $("extractDetail");
+    if (detail) detail.textContent = "The read stopped. Try again, use a different address, or type the basics.";
   }
 
   $("retryImport").addEventListener("click", () => $("importForm").requestSubmit());
@@ -468,14 +549,38 @@
     const data = await api("/api/brands/" + brandId);
     if (data.status === "failed") {
       show("progressView");
+      settleExtractSteps();
       $("blockedBox").hidden = false;
       $("blockedText").textContent = data.error || "We could not read that address.";
+      $("progressText").textContent = "The import stopped";
       return;
     }
     if (data.status !== "ready") {
       show("progressView");
-      $("progressText").textContent = "Reading your website";
-      return;
+      $("blockedBox").hidden = true;
+      const saved = recallExtract();
+      const url = data.sourceUrl || (saved && saved.url) || "";
+      startExtractClock(url);
+      renderExtractProgress("reading_website");
+      if (saved && saved.brandId === brandId && saved.jobId) {
+        const job = await pollJob(saved.jobId, (current) => renderExtractProgress(current.progress));
+        if (job.status === "failed") return showBlocked();
+        forgetExtract();
+        stopExtractClock();
+        await openBrand();
+        return;
+      }
+      for (;;) {
+        const fresh = await api("/api/brands/" + brandId);
+        if (fresh.status === "failed") return showBlocked();
+        if (fresh.status === "ready") {
+          forgetExtract();
+          stopExtractClock();
+          await openBrand();
+          return;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 1200));
+      }
     }
     await openBrand(false);
     if (data.latestRun) {
@@ -491,5 +596,35 @@
     }
     show("confirmView");
   }
+
+  function bindExampleCarousel() {
+    const root = document.querySelector("[data-carousel]");
+    if (!root) return;
+    const track = root.querySelector(".carousel-track");
+    const status = root.querySelector(".carousel-status");
+    const pages = track ? Array.from(track.children) : [];
+    if (!track || !pages.length) return;
+    const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    const update = () => {
+      const width = track.clientWidth || 1;
+      const index = Math.min(pages.length - 1, Math.max(0, Math.round(track.scrollLeft / width)));
+      if (status) status.textContent = (index + 1) + " of " + pages.length;
+    };
+    const go = (direction) => {
+      track.scrollBy({ left: direction * track.clientWidth, behavior: reduce ? "auto" : "smooth" });
+    };
+    const prev = root.querySelector("[data-carousel-prev]");
+    const next = root.querySelector("[data-carousel-next]");
+    if (prev) prev.addEventListener("click", () => go(-1));
+    if (next) next.addEventListener("click", () => go(1));
+    track.addEventListener("scroll", update, { passive: true });
+    track.addEventListener("keydown", (event) => {
+      if (event.key === "ArrowRight") { event.preventDefault(); go(1); }
+      if (event.key === "ArrowLeft") { event.preventDefault(); go(-1); }
+    });
+    update();
+  }
+
+  bindExampleCarousel();
   boot().catch(() => show("urlView"));
 })();
