@@ -1,6 +1,9 @@
-export type FormatFamily = "carousel" | "explainer" | "proof";
+/** Checklist images stay `explainer` internally. `hook` is the text-only post. */
+export type FormatFamily = "carousel" | "explainer" | "hook";
 export type PostChannel = "linkedin" | "x";
 export type EnglishChoice = "uk" | "us";
+
+export const HOOK_COMPOSITION_ID = "hook-text";
 
 export interface PostPageCopy {
   heading: string;
@@ -20,7 +23,11 @@ export interface PostDraft {
   hook: string;
   hookAlternatives: string[];
   caption: string;
-  xCaption: string;
+  /**
+   * Kept so older rows still read. New drafts leave it empty.
+   * LinkedIn is the only network these formats are written for.
+   */
+  xCaption?: string;
   altText: string;
   pages: PostPageCopy[];
   claims: SourceClaim[];

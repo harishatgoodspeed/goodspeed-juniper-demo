@@ -105,7 +105,7 @@ export function insertPost(
     fields.draft.hook,
     JSON.stringify(fields.draft.hookAlternatives),
     fields.draft.caption,
-    fields.draft.xCaption,
+    fields.draft.xCaption ?? "",
     fields.draft.altText,
     fields.draft.rationale,
     fields.formatNote,

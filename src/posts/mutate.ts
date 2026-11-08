@@ -2,7 +2,7 @@ import type Database from "better-sqlite3";
 import { unsupportedNumericTokens, verifyCitedClaims, type LedgerEntry } from "../ledger";
 import { getRun } from "../runs";
 import { draftFromRow, getPost, listPostsForRun, snapshotPost, updatePostFields, type PostRow } from "./store";
-import { X_CHAR_LIMIT } from "./types";
+import { HOOK_COMPOSITION_ID } from "./types";
 import { rerenderPost, type PostsJobDeps } from "../jobs/run-posts-job";
 import type { PostDraft } from "./types";
 
@@ -24,10 +24,6 @@ export function editPostCopy(
   const siblings = listPostsForRun(db, post.run_id).filter((row) => row.id !== post.id);
   invalidate(db, post);
   const caption = patch.caption ?? post.caption;
-  const xCaption = patch.xCaption ?? post.x_caption ?? "";
-  if (xCaption.length > X_CHAR_LIMIT) {
-    throw new Error(`X copy must stay within ${X_CHAR_LIMIT} characters.`);
-  }
   const hooks = JSON.parse(post.hook_alternatives_json) as string[];
   const hook = patch.hook ?? post.hook;
   if (patch.hook && !hooks.includes(patch.hook) && patch.hook !== post.hook) {
@@ -41,7 +37,6 @@ export function editPostCopy(
       alt_text: patch.altText ?? post.alt_text,
       hook,
       hook_alternatives_json: JSON.stringify(hooks.slice(0, 3)),
-      x_caption: xCaption,
       review_passed: 0,
       review_json: null,
       review_revision: null,
@@ -53,7 +48,7 @@ export function editPostCopy(
   const run = getRun(db, post.run_id);
   const ledger = ledgerFor(run?.ledger_json ?? null);
   const blob = ledger.map((entry) => entry.excerpt).join("\n");
-  const visible = `${updated.caption}\n${updated.x_caption ?? ""}\n${updated.hook}`;
+  const visible = `${updated.caption}\n${updated.hook}`;
   const missing = unsupportedNumericTokens(visible, blob);
   const claims = JSON.parse(updated.claims_json);
   const cited = verifyCitedClaims(claims, ledger);
@@ -98,10 +93,12 @@ export async function changePostLayout(
 ): Promise<PostRow> {
   const post = getPost(db, postId);
   if (!post) throw new Error("Post not found");
+  if (post.format_family === "hook" || compositionId === HOOK_COMPOSITION_ID) {
+    throw new Error("A text hook post has no image layout to swap.");
+  }
   const allowed: Record<string, string[]> = {
     carousel: ["carousel-steps", "carousel-checklist"],
-    explainer: ["explainer-framework", "explainer-comparison"],
-    proof: ["proof-annotation", "proof-split", "text-pov", "text-columns"],
+    explainer: ["explainer-framework"],
   };
   if (!allowed[post.format_family]?.includes(compositionId)) {
     throw new Error("That layout is not available for this post.");
@@ -139,7 +136,7 @@ export async function regenerateOnePost(
       hook: replacement.hook,
       hook_alternatives_json: JSON.stringify(replacement.hookAlternatives),
       caption: replacement.caption,
-      x_caption: replacement.xCaption,
+      x_caption: "",
       alt_text: replacement.altText,
       composition_id: replacement.compositionId,
       pages_json: JSON.stringify(replacement.pages),

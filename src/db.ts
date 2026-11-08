@@ -65,11 +65,19 @@ export function runMigrations(db: Database.Database): void {
   for (const file of files) {
     if (applied.has(file)) continue;
     const sql = fs.readFileSync(path.join(dir, file), "utf8");
-    const applyOne = db.transaction(() => {
-      db.exec(sql);
-      db.prepare("INSERT INTO schema_migrations (id) VALUES (?)").run(file);
-    });
-    applyOne();
+    // Table rebuilds (SQLite cannot ALTER a CHECK) drop tables that other
+    // tables reference. That has to happen with foreign keys off, and the
+    // pragma cannot be changed inside the transaction that applies the file.
+    db.pragma("foreign_keys = OFF");
+    try {
+      const applyOne = db.transaction(() => {
+        db.exec(sql);
+        db.prepare("INSERT INTO schema_migrations (id) VALUES (?)").run(file);
+      });
+      applyOne();
+    } finally {
+      db.pragma("foreign_keys = ON");
+    }
   }
 }
 

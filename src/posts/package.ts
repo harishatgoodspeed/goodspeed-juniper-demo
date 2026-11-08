@@ -3,11 +3,22 @@ import path from "node:path";
 import { buildZip, type ZipEntry } from "../zip-safe";
 import type { PostAssetRow, PostRow } from "./store";
 
+function imageName(post: PostRow, asset: PostAssetRow, imageCount: number): string | null {
+  if (asset.kind === "x_png") return null;
+  if (asset.kind === "pdf") return post.format_family === "carousel" ? "carousel.pdf" : null;
+  if (post.format_family === "explainer" && imageCount === 1) return "checklist.png";
+  return `page-${String((asset.page_index ?? 0) + 1).padStart(2, "0")}.png`;
+}
+
 export function postPackageEntries(post: PostRow, assets: PostAssetRow[], ledger: { id: string; sourceUrl: string }[]): ZipEntry[] {
-  const entries: ZipEntry[] = [
-    { name: "caption.txt", data: post.caption },
-    { name: "x-post.txt", data: post.x_caption ?? "" },
-    { name: "alt.txt", data: post.alt_text },
+  const hook = post.format_family === "hook";
+  const entries: ZipEntry[] = [{ name: "caption.txt", data: post.caption }];
+  if (hook) {
+    entries.push({ name: "hook.txt", data: post.hook });
+  } else {
+    entries.push({ name: "alt.txt", data: post.alt_text });
+  }
+  entries.push(
     { name: "brand-version.txt", data: String(post.brand_version) },
     { name: "revision.txt", data: String(post.revision) },
     {
@@ -24,18 +35,19 @@ export function postPackageEntries(post: PostRow, assets: PostAssetRow[], ledger
         null,
         2
       ),
-    },
-  ];
-  const ordered = [...assets].sort((a, b) => (a.page_index ?? 0) - (b.page_index ?? 0));
+    }
+  );
+  if (hook) return entries;
+
+  const ordered = [...assets]
+    .filter((asset) => asset.kind !== "x_png")
+    .sort((a, b) => (a.page_index ?? 0) - (b.page_index ?? 0));
+  const imageCount = ordered.filter((asset) => asset.kind !== "pdf").length;
   for (const asset of ordered) {
     if (!asset.file_path || !fs.existsSync(asset.file_path)) continue;
-    const base =
-      asset.kind === "pdf"
-        ? "carousel.pdf"
-        : asset.kind === "x_png"
-          ? "x.png"
-          : `page-${String((asset.page_index ?? 0) + 1).padStart(2, "0")}.png`;
-    entries.push({ name: base, data: fs.readFileSync(asset.file_path) });
+    const name = imageName(post, asset, imageCount);
+    if (!name) continue;
+    entries.push({ name, data: fs.readFileSync(asset.file_path) });
   }
   return entries;
 }
