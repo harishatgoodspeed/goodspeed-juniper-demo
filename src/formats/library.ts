@@ -2,12 +2,14 @@
  * Server owned format library. These are observed structures, not proof of
  * virality and not fresh live discovery. Permitted use is the structure only.
  * Observed dates are the research dates from 7 November 2026, Europe/London.
+ * The free tool drafts three LinkedIn posts: a carousel, a checklist image,
+ * and a text hook. There is no gallery and no X export.
  */
 
 export interface FormatReference {
   id: string;
-  family: "carousel" | "explainer" | "proof";
-  platform: "linkedin" | "x";
+  family: "carousel" | "explainer" | "hook";
+  platform: "linkedin";
   name: string;
   exampleUrl: string;
   observedDate: string;
@@ -35,51 +37,29 @@ export const FORMAT_LIBRARY: FormatReference[] = [
     name: "Useful planning carousel",
     exampleUrl: "https://www.linkedin.com/posts/thecreativeconnect-uk_ukbusiness-contentstrategy-digitalmarketing-activity-7523092845348646913--_7I",
     observedDate: "2026-11-07",
-    structure: "A sequence people can save and follow, with one action or date idea per page.",
+    structure: "A sequence people can save and follow, with one action or date idea per page. This is the checklist-carousel recipe.",
     permittedUse: "structure_only",
     live: false,
   },
   {
-    id: "saveable-framework",
+    id: "saveable-checklist",
     family: "explainer",
-    platform: "x",
-    name: "Saveable checklist or framework",
-    exampleUrl: "https://x.com/Akankshaku46881/status/2118921437910274452",
+    platform: "linkedin",
+    name: "Saveable checklist",
+    exampleUrl: "",
     observedDate: "2026-11-07",
-    structure: "One image that still makes sense without the caption. Hierarchy, a short list or a comparison. No fake button.",
+    structure: "One portrait image that still makes sense without the caption. A short checklist with clear hierarchy. No comparison table and no fake button.",
     permittedUse: "structure_only",
     live: false,
   },
   {
-    id: "proof-walkthrough",
-    family: "proof",
-    platform: "x",
-    name: "Proof led walkthrough",
-    exampleUrl: "https://x.com/i/status/2118725601528062135",
-    observedDate: "2026-11-06",
-    structure: "A real screenshot or detail with one insight. If the image is missing, use a text led point instead of a fake picture.",
-    permittedUse: "structure_only",
-    live: false,
-  },
-  {
-    id: "proof-with-resources",
-    family: "proof",
-    platform: "x",
-    name: "Demonstration with resources",
-    exampleUrl: "https://x.com/i/status/2117998992126591399",
-    observedDate: "2026-11-04",
-    structure: "Show the thing, then a short list of what the reader can do next. No invented result.",
-    permittedUse: "structure_only",
-    live: false,
-  },
-  {
-    id: "proof-tool-demo",
-    family: "proof",
-    platform: "x",
-    name: "Tool demonstration",
-    exampleUrl: "https://x.com/i/status/2116847879071404490",
-    observedDate: "2026-11-01",
-    structure: "A practical demonstration of a tool or method. Do not copy the artwork or claim the creator's results.",
+    id: "text-hook-post",
+    family: "hook",
+    platform: "linkedin",
+    name: "Text hook post",
+    exampleUrl: "",
+    observedDate: "2026-11-08",
+    structure: "A short hook, two or three alternative hooks, and a LinkedIn caption. No image and no pages to render.",
     permittedUse: "structure_only",
     live: false,
   },

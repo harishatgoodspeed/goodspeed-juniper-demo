@@ -13,10 +13,9 @@ import { setJobProgress } from "../jobs";
 import { getRun, setRunBriefs, setRunLedger, setRunStatus } from "../runs";
 import { buildSourceLedger, type LedgerEntry } from "../ledger";
 import { releaseReservation, settleUsage } from "../spend";
-import { approvedImagePaths } from "../imagery";
 import { evergreenLabel, formatReferenceFor } from "../formats/library";
 import { generatePostConcepts as realGeneratePostConcepts, type GeneratePostsInput } from "../posts/concepts";
-import type { PostDraft, PostPackageSet } from "../posts/types";
+import type { FormatFamily, PostDraft, PostPackageSet } from "../posts/types";
 import { insertPost, listPostsForRun, replacePostAssets, updatePostFields, type PostRow } from "../posts/store";
 import { renderPostPackage as realRenderPostPackage, type RenderedPostPackage } from "../generate/render-post";
 import type { PostTemplateAssets } from "../generate/post-templates";
@@ -69,21 +68,17 @@ export async function runPostsBriefJob(db: Database.Database, job: JobRow, deps:
   setRunLedger(db, run.id, JSON.stringify(ledger));
 
   const variant = run.english_variant === "us" ? "us" : "uk";
-  const channel = run.channel === "x" ? "x" : "linkedin";
-  const imageIds = approved.approvedImageAssetIds ?? [];
+  const channel = "linkedin" as const;
   const input: GeneratePostsInput = {
     task: run.task,
-    channel,
     englishVariant: variant,
     voiceNotes: approved.voiceNotes ?? "",
     ledger,
     colours: approved.colours,
     fonts: approved.fonts,
     logoAssetId: approved.logoAssetId,
-    approvedImageIds: imageIds,
     businessSummary: raw.description ?? "",
     audienceHint: "",
-    count: 3,
   };
 
   try {
@@ -104,8 +99,8 @@ export async function runPostsBriefJob(db: Database.Database, job: JobRow, deps:
       completionTokens: pack.completionTokens,
       elapsedMs: pack.elapsedMs,
     });
-    pack.posts.forEach((draft, index) => {
-      const reference = formatReferenceFor(draft.formatFamily);
+    for (const [index, draft] of orderedFreePosts(pack.posts).entries()) {
+      const reference = formatReferenceFor(draft.formatFamily as "carousel" | "explainer" | "hook");
       insertPost(db, {
         runId: run.id,
         position: index,
@@ -116,7 +111,7 @@ export async function runPostsBriefJob(db: Database.Database, job: JobRow, deps:
         formatNote: `${evergreenLabel()}. ${reference.name}. Observed ${reference.observedDate}. Not a live trend.`,
         sourceRefs: ledger.map((entry) => ({ id: entry.id, sourceUrl: entry.sourceUrl })),
       });
-    });
+    }
   } catch (err) {
     releaseReservation(db, run.reservation_id);
     setRunStatus(db, run.id, "failed");
@@ -124,7 +119,35 @@ export async function runPostsBriefJob(db: Database.Database, job: JobRow, deps:
   }
 }
 
+const FREE_ORDER: FormatFamily[] = ["carousel", "explainer", "hook"];
+
+function orderedFreePosts(posts: PostDraft[]): PostDraft[] {
+  if (posts.length !== 3) {
+    throw new Error("A free run must draft exactly three posts: a carousel, a checklist and a text hook.");
+  }
+  const byFamily = new Map(posts.map((post) => [post.formatFamily, post]));
+  const ordered = FREE_ORDER.map((family) => byFamily.get(family));
+  if (ordered.some((post) => !post)) {
+    throw new Error("A free run must draft exactly three posts: a carousel, a checklist and a text hook.");
+  }
+  return ordered as PostDraft[];
+}
+
 function evidenceFor(draft: PostDraft, rendered: RenderedPostPackage): RenderEvidence {
+  const text = [draft.hook, draft.caption, rendered.text].filter(Boolean).join("\n");
+  if (draft.formatFamily === "hook") {
+    return {
+      outputType: "post_copy",
+      filePath: null,
+      width: 0,
+      height: 0,
+      regions: [],
+      fontChecks: [],
+      logoCheck: null,
+      overflow: false,
+      text,
+    };
+  }
   return {
     outputType: "linkedin_image",
     filePath: rendered.pages[0]?.filePath ?? null,
@@ -134,22 +157,23 @@ function evidenceFor(draft: PostDraft, rendered: RenderedPostPackage): RenderEvi
     fontChecks: [],
     logoCheck: null,
     overflow: rendered.layout.overflow,
-    text: [draft.caption, draft.xCaption, rendered.text].filter(Boolean).join("\n"),
+    text,
     layout: rendered.layout,
   };
 }
 
 function briefFor(draft: PostDraft, voice: string): Brief {
+  const textOnly = draft.formatFamily === "hook";
   return {
-    outputType: "linkedin_image",
+    outputType: textOnly ? "post_copy" : "linkedin_image",
     purpose: draft.rationale,
     audience: "",
     sourcedFactualCopy: [],
     layoutDirection: draft.compositionId,
     paletteTokenHexes: draft.paletteTokenHexes,
     fontFamilies: draft.fontFamilies,
-    logoAssetId: draft.logoAssetId,
-    imageAssetIds: draft.imageAssetIds,
+    logoAssetId: textOnly ? null : draft.logoAssetId,
+    imageAssetIds: [],
     voiceGuidance: voice,
     unknowns: [],
   };
@@ -169,14 +193,13 @@ export async function runPostsGenerateJob(db: Database.Database, job: JobRow, de
   const approved = JSON.parse(brand.approved_context_json) as ApprovedBrandContext;
   const raw = brand.context_json ? (JSON.parse(brand.context_json) as BrandContext) : null;
   const fontFaces = raw ? await resolveFonts(approved.fonts, raw) : new Map<string, ResolvedFontFace>();
-  const imagePaths = approvedImagePaths(db, brand.id, approved.approvedImageAssetIds);
   const logoPath = approved.logoAssetId
     ? (db.prepare(`SELECT local_path FROM source_assets WHERE id = ?`).get(approved.logoAssetId) as { local_path: string | null } | undefined)
         ?.local_path ?? undefined
     : undefined;
   const assets: PostTemplateAssets = {
     logoPath: logoPath && fs.existsSync(logoPath) ? logoPath : undefined,
-    imagePaths,
+    imagePaths: [],
     fontFaces,
   };
   const ledger = (run.ledger_json ? JSON.parse(run.ledger_json) : []) as LedgerEntry[];
@@ -207,7 +230,16 @@ async function renderOnePost(
   const draft = draftFromRow(post);
   const outDir = path.join(config.ASSET_DIR, "brands", "posts", post.id, `r${post.revision}`);
   try {
-    const rendered = await render(draft, assets, outDir, post.channel);
+    const rendered =
+      draft.formatFamily === "hook"
+        ? {
+            pages: [],
+            pdfPath: null,
+            text: [draft.hook, draft.caption].filter(Boolean).join("\n"),
+            compositionId: "hook-text",
+            layout: { overflow: false, overlap: false, minBodyPx: 0, contrastRatio: 0, problems: [] },
+          }
+        : await render(draft, { ...assets, imagePaths: [] }, outDir, "linkedin");
     const usage: { promptTokens: number; completionTokens: number } = { promptTokens: 0, completionTokens: 0 };
     const review = await reviewOutput(evidenceFor(draft, rendered), briefFor(draft, voice), {
       ledger,
@@ -229,7 +261,7 @@ async function renderOnePost(
       });
     }
     const files: Array<{
-      kind: "pdf" | "png" | "page_png" | "x_png";
+      kind: "pdf" | "png" | "page_png";
       page_index: number | null;
       file_path: string;
       width: number | null;
@@ -312,7 +344,7 @@ export async function rerenderPost(db: Database.Database, postId: string, deps: 
     : undefined;
   const assets: PostTemplateAssets = {
     logoPath: logoPath && fs.existsSync(logoPath) ? logoPath : undefined,
-    imagePaths: approvedImagePaths(db, brand.id, approved.approvedImageAssetIds),
+    imagePaths: [],
     fontFaces,
   };
   const ledger = (run.ledger_json ? JSON.parse(run.ledger_json) : []) as LedgerEntry[];

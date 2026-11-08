@@ -1,8 +1,8 @@
 import type Database from "better-sqlite3";
+import { GOODSPEED_CONTACT_URL } from "../contact";
 import { unsupportedNumericTokens, verifyCitedClaims, type LedgerEntry } from "../ledger";
 import { getRun } from "../runs";
-import { draftFromRow, getPost, listPostsForRun, snapshotPost, updatePostFields, type PostRow } from "./store";
-import { X_CHAR_LIMIT } from "./types";
+import { getPost, listPostsForRun, snapshotPost, updatePostFields, type PostRow } from "./store";
 import { rerenderPost, type PostsJobDeps } from "../jobs/run-posts-job";
 import type { PostDraft } from "./types";
 
@@ -10,24 +10,51 @@ function ledgerFor(runLedger: string | null): LedgerEntry[] {
   return runLedger ? (JSON.parse(runLedger) as LedgerEntry[]) : [];
 }
 
-function invalidate(db: Database.Database, post: PostRow): void {
-  snapshotPost(db, post);
+export class RegenerateCapError extends Error {
+  readonly code = "regenerate_cap";
+  readonly contactUrl = GOODSPEED_CONTACT_URL;
+
+  constructor() {
+    super("This post has already been regenerated once. Talk to Goodspeed to go further.");
+    this.name = "RegenerateCapError";
+  }
+}
+
+export function claimRegenerate(db: Database.Database, postId: string): PostRow {
+  const post = getPost(db, postId);
+  if (!post) throw new Error("Post not found");
+  const claim = db
+    .prepare(
+      `UPDATE posts
+       SET regenerate_count = regenerate_count + 1,
+           updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')
+       WHERE id = ? AND regenerate_count < 1`
+    )
+    .run(postId);
+  if (claim.changes !== 1) throw new RegenerateCapError();
+  return getPost(db, postId)!;
+}
+
+export function releaseRegenerateClaim(db: Database.Database, postId: string): void {
+  db.prepare(
+    `UPDATE posts
+     SET regenerate_count = CASE WHEN regenerate_count > 0 THEN regenerate_count - 1 ELSE 0 END,
+         updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')
+     WHERE id = ?`
+  ).run(postId);
 }
 
 export function editPostCopy(
   db: Database.Database,
   postId: string,
-  patch: { caption?: string; altText?: string; hook?: string; xCaption?: string }
+  patch: { caption?: string; altText?: string; hook?: string }
 ): PostRow {
   const post = getPost(db, postId);
   if (!post) throw new Error("Post not found");
+  const beforeCount = post.regenerate_count ?? 0;
   const siblings = listPostsForRun(db, post.run_id).filter((row) => row.id !== post.id);
-  invalidate(db, post);
+  snapshotPost(db, post);
   const caption = patch.caption ?? post.caption;
-  const xCaption = patch.xCaption ?? post.x_caption ?? "";
-  if (xCaption.length > X_CHAR_LIMIT) {
-    throw new Error(`X copy must stay within ${X_CHAR_LIMIT} characters.`);
-  }
   const hooks = JSON.parse(post.hook_alternatives_json) as string[];
   const hook = patch.hook ?? post.hook;
   if (patch.hook && !hooks.includes(patch.hook) && patch.hook !== post.hook) {
@@ -41,7 +68,6 @@ export function editPostCopy(
       alt_text: patch.altText ?? post.alt_text,
       hook,
       hook_alternatives_json: JSON.stringify(hooks.slice(0, 3)),
-      x_caption: xCaption,
       review_passed: 0,
       review_json: null,
       review_revision: null,
@@ -50,10 +76,13 @@ export function editPostCopy(
     true
   );
   const updated = getPost(db, post.id)!;
+  if ((updated.regenerate_count ?? 0) !== beforeCount) {
+    throw new Error("A copy edit must not count as a regenerate.");
+  }
   const run = getRun(db, post.run_id);
   const ledger = ledgerFor(run?.ledger_json ?? null);
   const blob = ledger.map((entry) => entry.excerpt).join("\n");
-  const visible = `${updated.caption}\n${updated.x_caption ?? ""}\n${updated.hook}`;
+  const visible = `${updated.caption}\n${updated.hook}`;
   const missing = unsupportedNumericTokens(visible, blob);
   const claims = JSON.parse(updated.claims_json);
   const cited = verifyCitedClaims(claims, ledger);
@@ -100,8 +129,8 @@ export async function changePostLayout(
   if (!post) throw new Error("Post not found");
   const allowed: Record<string, string[]> = {
     carousel: ["carousel-steps", "carousel-checklist"],
-    explainer: ["explainer-framework", "explainer-comparison"],
-    proof: ["proof-annotation", "proof-split", "text-pov", "text-columns"],
+    explainer: ["explainer-framework"],
+    hook: [],
   };
   if (!allowed[post.format_family]?.includes(compositionId)) {
     throw new Error("That layout is not available for this post.");
@@ -122,13 +151,15 @@ export async function regenerateOnePost(
   db: Database.Database,
   postId: string,
   replacement: PostDraft,
-  deps: PostsJobDeps = {}
+  deps: PostsJobDeps = {},
+  options: { alreadyClaimed?: boolean } = {}
 ): Promise<PostRow> {
-  const post = getPost(db, postId);
-  if (!post) throw new Error("Post not found");
-  if (replacement.formatFamily !== post.format_family) {
+  const existing = getPost(db, postId);
+  if (!existing) throw new Error("Post not found");
+  if (replacement.formatFamily !== existing.format_family) {
     throw new Error("Regeneration must keep this post's format. It does not replace the other posts.");
   }
+  const post = options.alreadyClaimed ? existing : claimRegenerate(db, postId);
   const before = listPostsForRun(db, post.run_id);
   snapshotPost(db, post);
   updatePostFields(
@@ -139,10 +170,9 @@ export async function regenerateOnePost(
       hook: replacement.hook,
       hook_alternatives_json: JSON.stringify(replacement.hookAlternatives),
       caption: replacement.caption,
-      x_caption: replacement.xCaption,
       alt_text: replacement.altText,
       composition_id: replacement.compositionId,
-      pages_json: JSON.stringify(replacement.pages),
+      pages_json: JSON.stringify(replacement.formatFamily === "hook" ? [] : replacement.pages),
       claims_json: JSON.stringify(replacement.claims),
       rationale: replacement.rationale,
       status: "pending",

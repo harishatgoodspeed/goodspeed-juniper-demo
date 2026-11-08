@@ -24,8 +24,13 @@ import { approvedImagePaths } from "../src/imagery";
 import { normalisePostDrafts, PostDraftError } from "../src/posts/validate";
 import { englishChoiceInstruction } from "../src/posts/validate";
 import { pagesForDraft } from "../src/generate/post-templates";
-import { insertPost, listPostsForRun } from "../src/posts/store";
+import { insertPost, listPostAssets, listPostsForRun } from "../src/posts/store";
 import { editPostCopy, regenerateOnePost } from "../src/posts/mutate";
+import { postsSystemPrompt } from "../src/posts/concepts";
+import { enqueueJob } from "../src/jobs";
+import { runPostsBriefJob, runPostsGenerateJob } from "../src/jobs/run-posts-job";
+import { renderSharePage } from "../src/share-page";
+import { GOODSPEED_CONTACT_URL } from "../src/contact";
 import { setRunLedger } from "../src/runs";
 import { purgeExpiredBrands } from "../src/retention";
 import type { Brief } from "../src/pipeline-types";
@@ -63,7 +68,6 @@ function draft(family: PostDraft["formatFamily"], compositionId: string, pages: 
     hook: "Start with the sole you already have.",
     hookAlternatives: ["Start with the sole you already have.", "A workshop habit worth keeping."],
     caption: "Example Co repairs walking boots in a small workshop. Bring the pair in before the sole splits.",
-    xCaption: "Boots fail at the sole first. Repair them before the split.",
     altText: "A short guide to repairing walking boots.",
     pages: Array.from({ length: pages }, (_, i) => page(i + 1)),
     claims: [
@@ -160,7 +164,7 @@ test("explicit American English wins over a British looking site", () => {
   assert.match(line, /explicitly/);
 });
 
-test("X copy over the character limit is rejected and a truncation of the LinkedIn caption is rejected", () => {
+test("a free run is a carousel, a checklist and a hook, and does not require X copy", () => {
   const ledger = buildSourceLedger({
     sourceUrl: "https://example.com",
     description: "Example Co repairs walking boots in a small workshop.",
@@ -171,24 +175,32 @@ test("X copy over the character limit is rejected and a truncation of the Linked
     colours: ["#F4F1EA", "#1F3A2E", "#1C1C1C"],
     fonts: ["Georgia"],
     logoAssetId: null,
-    approvedImageIds: [],
     ledger,
-    channel: "linkedin" as const,
     englishVariant: "uk" as const,
-    ownedImageCount: 0,
   };
   const posts = [
     draft("carousel", "carousel-steps", 6),
     draft("explainer", "explainer-framework", 4),
-    draft("proof", "text-pov", 3),
+    draft("hook", "hook-text", 0),
   ];
-  assert.equal(normalisePostDrafts(posts, base).length, 3);
-  const tooLong = draft("carousel", "carousel-steps", 6);
-  tooLong.xCaption = "a".repeat(281);
-  assert.throws(() => normalisePostDrafts([tooLong, posts[1], posts[2]], base), PostDraftError);
-  const truncated = draft("carousel", "carousel-steps", 6);
-  truncated.xCaption = truncated.caption.slice(0, 40);
-  assert.throws(() => normalisePostDrafts([truncated, posts[1], posts[2]], base), /separately/);
+  const normalised = normalisePostDrafts(posts, base);
+  assert.equal(normalised.length, 3);
+  assert.deepEqual(
+    normalised.map((post) => post.formatFamily).sort(),
+    ["carousel", "explainer", "hook"]
+  );
+  assert.equal(normalised.find((post) => post.formatFamily === "hook")?.pages.length, 0);
+  assert.equal("xCaption" in normalised[0], false);
+  assert.throws(() => normalisePostDrafts([posts[0], posts[1], draft("explainer", "explainer-framework", 4)], base), /hook/);
+  assert.throws(() => normalisePostDrafts([posts[0], posts[1], draft("proof", "text-pov", 3)], base), /hook/);
+  const tooLong = draft("hook", "hook-text", 0);
+  tooLong.caption = "a".repeat(3001);
+  assert.throws(() => normalisePostDrafts([posts[0], posts[1], tooLong], base), /LinkedIn/);
+  const prompt = postsSystemPrompt(3, "uk");
+  assert.match(prompt, /text-only hook/);
+  assert.match(prompt, /Do not write an X caption/);
+  assert.doesNotMatch(prompt, /xCaption/);
+  assert.doesNotMatch(prompt, /proof led/);
 });
 
 test("compositions differ and none of them is a Learn more pill", () => {
@@ -263,11 +275,11 @@ test("regenerating one post does not change the other two", async () => {
   setApprovedContext(db, brand.id, { logoAssetId: null, colours: ["#F4F1EA"], fonts: ["Georgia"], voiceNotes: "" });
   const run = createRun(db, brand.id, "Posts", null, 1, { mode: "posts", englishVariant: "us", channel: "linkedin" });
   setRunLedger(db, run.id, "[]");
-  const ids = ["carousel", "explainer", "proof"].map((family, index) =>
+  const ids = ["carousel", "explainer", "hook"].map((family, index) =>
     insertPost(db, {
       runId: run.id,
       position: index,
-      draft: draft(family as PostDraft["formatFamily"], family === "carousel" ? "carousel-steps" : family === "explainer" ? "explainer-framework" : "text-pov", family === "carousel" ? 6 : 4),
+      draft: draft(family as PostDraft["formatFamily"], family === "carousel" ? "carousel-steps" : family === "explainer" ? "explainer-framework" : "hook-text", family === "carousel" ? 6 : family === "explainer" ? 4 : 0),
       channel: "linkedin",
       englishVariant: "us",
       brandVersion: 1,
@@ -280,21 +292,35 @@ test("regenerating one post does not change the other two", async () => {
   fs.writeFileSync(file, "x");
   const replacement = draft("carousel", "carousel-checklist", 6);
   replacement.title = "A different carousel";
+  let renders = 0;
   await regenerateOnePost(db, ids[0], replacement, {
-    renderPostPackage: async () => ({
+    renderPostPackage: async () => {
+      renders += 1;
+      return {
       pages: [{ index: 0, filePath: file, width: 10, height: 10, text: replacement.caption, layout: { overflow: false, overlap: false, minBodyPx: 36, contrastRatio: 7, problems: [] } }],
       pdfPath: null,
       text: replacement.caption,
       compositionId: "carousel-checklist",
       layout: { overflow: false, overlap: false, minBodyPx: 36, contrastRatio: 7, problems: [] },
-    }),
+    };
+    },
     resolveFontFaces: async () => new Map(),
   });
   const after = listPostsForRun(db, run.id);
   assert.equal(after[0].title, "A different carousel");
+  assert.equal(after[0].regenerate_count, 1);
   assert.equal(after[1].revision, before[1].revision);
   assert.equal(after[2].caption, before[2].caption);
+  assert.equal(after[2].format_family, "hook");
   assert.equal(getRun(db, run.id)?.english_variant, "us");
+  await assert.rejects(
+    () => regenerateOnePost(db, ids[0], replacement, { renderPostPackage: async () => { renders += 1; throw new Error("should not render"); }, resolveFontFaces: async () => new Map() }),
+    /Talk to Goodspeed/
+  );
+  assert.equal(renders, 1);
+  const edited = editPostCopy(db, ids[0], { caption: "Example Co repairs walking boots in a small workshop." });
+  assert.equal(edited.regenerate_count, 1);
+  assert.match(edited.caption, /workshop/);
   fs.rmSync(file, { force: true });
 });
 
@@ -329,6 +355,110 @@ test("zip entry names cannot escape and the caption stays paired with the post",
   assert.equal(readZipEntry(zip, "brand-version.txt")?.toString(), "3");
   assert.match(readZipEntry(zip, "sources.json")?.toString() ?? "", /example.com/);
   assert.doesNotMatch(readZipEntry(zip, "sources.json")?.toString() ?? "", /@/);
+  assert.equal(readZipEntry(zip, "x-post.txt"), null);
+  assert.equal(readZipEntry(zip, "x.png"), null);
+  const hook = insertPost(db, {
+    runId: run.id,
+    position: 1,
+    draft: draft("hook", "hook-text", 0),
+    channel: "linkedin",
+    englishVariant: "uk",
+    brandVersion: 3,
+    formatNote: "Evergreen format",
+    sourceRefs: [],
+  });
+  const hookZip = buildPostZip(
+    hook,
+    [{ id: "a", post_id: hook.id, kind: "x_png", page_index: 0, file_path: "/tmp/does-not-matter.png", width: 1, height: 1, mime_type: "image/png", byte_size: 1, created_at: "" }],
+    []
+  );
+  assert.equal(readZipEntry(hookZip, "caption.txt")?.toString(), hook.caption);
+  assert.equal(readZipEntry(hookZip, "hook.txt")?.toString(), hook.hook);
+  assert.equal(readZipEntry(hookZip, "x-post.txt"), null);
+  assert.equal(readZipEntry(hookZip, "x.png"), null);
+  assert.equal(readZipEntry(hookZip, "alt.txt"), null);
+});
+
+test("a posts job drafts carousel, checklist and hook, and does not render an image or an X file for the hook", async () => {
+  const db = openTestDb();
+  const owner = createAnonymousOwner(db);
+  const brand = createBrand(db, owner, "https://example.com");
+  setBrandContext(db, brand.id, context());
+  setApprovedContext(db, brand.id, {
+    logoAssetId: null,
+    colours: ["#F4F1EA"],
+    fonts: ["Georgia"],
+    voiceNotes: "",
+    approvedImageAssetIds: ["upload_should_not_be_used"],
+  });
+  const run = createRun(db, brand.id, "Posts", null, 1, { mode: "posts", englishVariant: "uk", channel: "x" });
+  const brief = enqueueJob(db, { runId: run.id, phase: "brief" });
+  await runPostsBriefJob(db, brief, {
+    generatePostConcepts: async (input) => {
+      assert.equal("channel" in input, false);
+      assert.equal("approvedImageIds" in input, false);
+      return {
+        posts: [
+          draft("hook", "hook-text", 0),
+          draft("carousel", "carousel-steps", 6),
+          draft("explainer", "explainer-framework", 4),
+        ].map((post) => ({ ...post, claims: [] })),
+        model: "test",
+        promptTokens: 3,
+        completionTokens: 2,
+        elapsedMs: 4,
+      };
+    },
+  });
+  const drafted = listPostsForRun(db, run.id);
+  assert.deepEqual(
+    drafted.map((post) => post.format_family),
+    ["carousel", "explainer", "hook"]
+  );
+  assert.ok(drafted.every((post) => post.channel === "linkedin"));
+  assert.ok(drafted.every((post) => (post.x_caption ?? "") === ""));
+  const rendered: string[] = [];
+  const file = path.join(os.tmpdir(), `pkg-${run.id}.png`);
+  fs.writeFileSync(file, "png");
+  const generate = enqueueJob(db, { runId: run.id, phase: "generate" });
+  await runPostsGenerateJob(db, generate, {
+    resolveFontFaces: async () => new Map(),
+    renderPostPackage: async (post, assets) => {
+      rendered.push(post.formatFamily);
+      assert.equal(assets.imagePaths.length, 0);
+      assert.notEqual(post.formatFamily, "hook");
+      return {
+        pages: [{ index: 0, filePath: file, width: 12, height: 12, text: post.caption, layout: { overflow: false, overlap: false, minBodyPx: 36, contrastRatio: 7, problems: [] } }],
+        pdfPath: null,
+        text: post.caption,
+        compositionId: post.compositionId,
+        layout: { overflow: false, overlap: false, minBodyPx: 36, contrastRatio: 7, problems: [] },
+      };
+    },
+  });
+  assert.deepEqual(rendered.sort(), ["carousel", "explainer"]);
+  const hook = listPostsForRun(db, run.id).find((post) => post.format_family === "hook");
+  assert.ok(hook);
+  assert.equal(listPostAssets(db, hook.id).length, 0);
+  for (const post of listPostsForRun(db, run.id)) {
+    assert.equal(listPostAssets(db, post.id).some((asset) => asset.kind === "x_png"), false);
+  }
+  const page = renderSharePage({
+    brand: { ...brand, context_json: JSON.stringify(context()), approved_context_json: "{}", approved_context_version: 1, error: null, created_at: "", updated_at: "" },
+    logoAssetId: null,
+    run: getRun(db, run.id) ?? null,
+    outputs: [],
+    posts: [
+      { formatFamily: "hook", title: hook.title, hook: hook.hook, caption: hook.caption, altText: "", label: "Draft", imageAssetId: null },
+    ],
+    viewToken: null,
+  });
+  assert.match(page, /Talk to Goodspeed/);
+  assert.match(page, new RegExp(GOODSPEED_CONTACT_URL.replace(/[.]/g, "\\.")));
+  assert.match(page, new RegExp(hook.hook.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+  assert.doesNotMatch(page, /type="email"/);
+  assert.doesNotMatch(page, /x-post/);
+  fs.rmSync(file, { force: true });
 });
 
 test("concurrent reservations cannot both pass a budget that only covers one", async () => {
