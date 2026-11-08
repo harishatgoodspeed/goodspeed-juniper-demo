@@ -24,7 +24,8 @@ import { approvedImagePaths } from "../src/imagery";
 import { normalisePostDrafts, PostDraftError } from "../src/posts/validate";
 import { englishChoiceInstruction } from "../src/posts/validate";
 import { pagesForDraft } from "../src/generate/post-templates";
-import { insertPost, listPostsForRun } from "../src/posts/store";
+import { postsSystemPrompt } from "../src/posts/concepts";
+import { insertPost, listPostsForRun, type PostAssetRow } from "../src/posts/store";
 import { editPostCopy, regenerateOnePost } from "../src/posts/mutate";
 import { setRunLedger } from "../src/runs";
 import { purgeExpiredBrands } from "../src/retention";
@@ -160,7 +161,7 @@ test("explicit American English wins over a British looking site", () => {
   assert.match(line, /explicitly/);
 });
 
-test("X copy over the character limit is rejected and a truncation of the LinkedIn caption is rejected", () => {
+test("a run needs a carousel, a checklist image, and a text hook", () => {
   const ledger = buildSourceLedger({
     sourceUrl: "https://example.com",
     description: "Example Co repairs walking boots in a small workshop.",
@@ -171,7 +172,7 @@ test("X copy over the character limit is rejected and a truncation of the Linked
     colours: ["#F4F1EA", "#1F3A2E", "#1C1C1C"],
     fonts: ["Georgia"],
     logoAssetId: null,
-    approvedImageIds: [],
+    approvedImageIds: [] as string[],
     ledger,
     channel: "linkedin" as const,
     englishVariant: "uk" as const,
@@ -180,29 +181,68 @@ test("X copy over the character limit is rejected and a truncation of the Linked
   const posts = [
     draft("carousel", "carousel-steps", 6),
     draft("explainer", "explainer-framework", 4),
-    draft("proof", "text-pov", 3),
+    draft("hook", "hook-text", 0),
   ];
-  assert.equal(normalisePostDrafts(posts, base).length, 3);
-  const tooLong = draft("carousel", "carousel-steps", 6);
-  tooLong.xCaption = "a".repeat(281);
-  assert.throws(() => normalisePostDrafts([tooLong, posts[1], posts[2]], base), PostDraftError);
-  const truncated = draft("carousel", "carousel-steps", 6);
-  truncated.xCaption = truncated.caption.slice(0, 40);
-  assert.throws(() => normalisePostDrafts([truncated, posts[1], posts[2]], base), /separately/);
+  const normalised = normalisePostDrafts(posts, base);
+  assert.equal(normalised.length, 3);
+  assert.equal(normalised[2].compositionId, "hook-text");
+  assert.deepEqual(normalised[2].pages, []);
+  assert.deepEqual(normalised[2].imageAssetIds, []);
+  assert.equal(normalised[2].logoAssetId, null);
+  assert.equal(normalised[2].xCaption, "");
+  assert.equal(normalised[2].altText, "");
+  assert.throws(
+    () => normalisePostDrafts([posts[0], posts[1], draft("explainer", "explainer-framework", 4)], base),
+    /hook/
+  );
+  const comparison = draft("explainer", "explainer-comparison", 4);
+  assert.equal(normalisePostDrafts([posts[0], comparison, posts[2]], base)[1].compositionId, "explainer-framework");
+  const noisy = draft("hook", "text-pov", 3);
+  noisy.imageAssetIds = ["not-an-approved-image"];
+  noisy.logoAssetId = "logo_other";
+  const cleaned = normalisePostDrafts([posts[0], posts[1], noisy], base);
+  assert.equal(cleaned[2].compositionId, "hook-text");
+  assert.deepEqual(cleaned[2].pages, []);
+  assert.deepEqual(cleaned[2].imageAssetIds, []);
+  assert.equal(cleaned[2].logoAssetId, null);
+  const short = draft("carousel", "carousel-steps", 5);
+  assert.throws(() => normalisePostDrafts([short, posts[1], posts[2]], base), /6 to 8/);
+});
+
+test("the draft prompt asks for the three LinkedIn formats and not an X post", () => {
+  const prompt = postsSystemPrompt(3, "uk");
+  assert.match(prompt, /carousel-steps/);
+  assert.match(prompt, /carousel-checklist/);
+  assert.match(prompt, /explainer-framework/);
+  assert.match(prompt, /hook-text/);
+  assert.match(prompt, /British English/);
+  assert.doesNotMatch(prompt, /xCaption|proof-annotation|proof-split|text-pov|text-columns/);
 });
 
 test("compositions differ and none of them is a Learn more pill", () => {
   const assets = { imagePaths: [] as string[] };
-  const steps = pagesForDraft(draft("carousel", "carousel-steps", 6), assets, "linkedin")[0].html;
-  const list = pagesForDraft(draft("carousel", "carousel-checklist", 6), assets, "linkedin")[0].html;
-  const framework = pagesForDraft(draft("explainer", "explainer-framework", 4), assets, "linkedin")[0].html;
-  const comparison = pagesForDraft(draft("explainer", "explainer-comparison", 4), assets, "linkedin")[0].html;
-  const pov = pagesForDraft(draft("proof", "text-pov", 3), assets, "linkedin")[0].html;
-  assert.notEqual(steps, list);
-  assert.notEqual(framework, comparison);
-  assert.match(steps, /carousel-steps/);
-  assert.match(list, /carousel-checklist/);
-  for (const html of [steps, list, framework, comparison, pov]) {
+  const steps = pagesForDraft(draft("carousel", "carousel-steps", 6), assets, "linkedin");
+  const list = pagesForDraft(draft("carousel", "carousel-checklist", 6), assets, "linkedin");
+  const framework = pagesForDraft(draft("explainer", "explainer-framework", 4), assets, "linkedin");
+  const hook = pagesForDraft(draft("hook", "hook-text", 0), assets, "linkedin");
+  const legacy = pagesForDraft(draft("proof" as PostDraft["formatFamily"], "proof-annotation", 3), assets, "x");
+  assert.notEqual(steps[0].html, list[0].html);
+  assert.equal(steps.length, 6);
+  assert.equal(list.length, 6);
+  assert.equal(framework.length, 1);
+  assert.equal(framework[0].compositionId, "explainer-framework");
+  assert.equal(framework[0].width, 1080);
+  assert.equal(framework[0].height, 1350);
+  assert.deepEqual(hook, []);
+  assert.deepEqual(legacy, []);
+  assert.match(steps[0].html, /carousel-steps/);
+  assert.match(list[0].html, /carousel-checklist/);
+  assert.match(framework[0].html, /Checklist/);
+  const asX = pagesForDraft(draft("carousel", "carousel-steps", 6), assets, "x");
+  assert.equal(asX[0].width, 1080);
+  assert.equal(asX[0].height, 1350);
+  assert.doesNotMatch(asX[0].html, /-x"/);
+  for (const html of [steps[0].html, steps[5].html, list[0].html, list[3].html, framework[0].html]) {
     assert.equal(html.includes("Learn more"), false);
   }
   const dark = draft("explainer", "explainer-framework", 4);
@@ -263,11 +303,15 @@ test("regenerating one post does not change the other two", async () => {
   setApprovedContext(db, brand.id, { logoAssetId: null, colours: ["#F4F1EA"], fonts: ["Georgia"], voiceNotes: "" });
   const run = createRun(db, brand.id, "Posts", null, 1, { mode: "posts", englishVariant: "us", channel: "linkedin" });
   setRunLedger(db, run.id, "[]");
-  const ids = ["carousel", "explainer", "proof"].map((family, index) =>
+  const ids = ["carousel", "explainer", "hook"].map((family, index) =>
     insertPost(db, {
       runId: run.id,
       position: index,
-      draft: draft(family as PostDraft["formatFamily"], family === "carousel" ? "carousel-steps" : family === "explainer" ? "explainer-framework" : "text-pov", family === "carousel" ? 6 : 4),
+      draft: draft(
+        family as PostDraft["formatFamily"],
+        family === "carousel" ? "carousel-steps" : family === "explainer" ? "explainer-framework" : "hook-text",
+        family === "carousel" ? 6 : family === "explainer" ? 4 : 0
+      ),
       channel: "linkedin",
       englishVariant: "us",
       brandVersion: 1,
@@ -306,6 +350,28 @@ test("legacy runs stay readable after the posts migration", () => {
   assert.equal(getRun(db, run.id)?.mode, "legacy");
   const output = createOutput(db, run.id, "linkedin_image", "{}");
   assert.equal(output.type, "linkedin_image");
+  const proof = insertPost(db, {
+    runId: run.id,
+    position: 0,
+    draft: draft("proof" as PostDraft["formatFamily"], "text-pov", 3),
+    channel: "linkedin",
+    englishVariant: "uk",
+    brandVersion: 1,
+    formatNote: "Evergreen format",
+    sourceRefs: [],
+  });
+  assert.equal(proof.format_family, "proof");
+  const hook = insertPost(db, {
+    runId: run.id,
+    position: 1,
+    draft: draft("hook", "hook-text", 0),
+    channel: "linkedin",
+    englishVariant: "uk",
+    brandVersion: 1,
+    formatNote: "Evergreen format",
+    sourceRefs: [],
+  });
+  assert.equal(hook.format_family, "hook");
 });
 
 test("zip entry names cannot escape and the caption stays paired with the post", () => {
@@ -324,11 +390,48 @@ test("zip entry names cannot escape and the caption stays paired with the post",
     formatNote: "Evergreen format",
     sourceRefs: [],
   });
-  const zip = buildPostZip(post, [], [{ id: "L1", sourceUrl: "https://example.com" }]);
+  const png = path.join(os.tmpdir(), `post-${post.id}.png`);
+  fs.writeFileSync(png, "png");
+  const asset = (kind: PostAssetRow["kind"], nameNote: number): PostAssetRow => ({
+    id: `asset_${kind}_${nameNote}`,
+    post_id: post.id,
+    kind,
+    page_index: kind === "pdf" || kind === "x_png" ? null : 0,
+    file_path: png,
+    width: 1080,
+    height: 1350,
+    mime_type: kind === "pdf" ? "application/pdf" : "image/png",
+    byte_size: 3,
+    created_at: "2026-11-08T00:00:00.000Z",
+  });
+  const zip = buildPostZip(post, [asset("png", 1), asset("x_png", 2)], [{ id: "L1", sourceUrl: "https://example.com" }]);
   assert.equal(readZipEntry(zip, "caption.txt")?.toString(), post.caption);
+  assert.equal(readZipEntry(zip, "alt.txt")?.toString(), post.alt_text);
+  assert.equal(readZipEntry(zip, "checklist.png")?.toString(), "png");
   assert.equal(readZipEntry(zip, "brand-version.txt")?.toString(), "3");
   assert.match(readZipEntry(zip, "sources.json")?.toString() ?? "", /example.com/);
   assert.doesNotMatch(readZipEntry(zip, "sources.json")?.toString() ?? "", /@/);
+  assert.equal(readZipEntry(zip, "x-post.txt"), null);
+  assert.equal(readZipEntry(zip, "x.png"), null);
+  const hook = insertPost(db, {
+    runId: run.id,
+    position: 1,
+    draft: draft("hook", "hook-text", 0),
+    channel: "linkedin",
+    englishVariant: "uk",
+    brandVersion: 3,
+    formatNote: "Evergreen format",
+    sourceRefs: [],
+  });
+  const hookZip = buildPostZip(hook, [asset("png", 3), asset("pdf", 4), asset("x_png", 5)], [{ id: "L1", sourceUrl: "https://example.com" }]);
+  assert.equal(readZipEntry(hookZip, "caption.txt")?.toString(), hook.caption);
+  assert.equal(readZipEntry(hookZip, "hook.txt")?.toString(), hook.hook);
+  assert.equal(readZipEntry(hookZip, "alt.txt"), null);
+  assert.equal(readZipEntry(hookZip, "checklist.png"), null);
+  assert.equal(readZipEntry(hookZip, "carousel.pdf"), null);
+  assert.equal(readZipEntry(hookZip, "x-post.txt"), null);
+  assert.equal(readZipEntry(hookZip, "x.png"), null);
+  fs.rmSync(png, { force: true });
 });
 
 test("concurrent reservations cannot both pass a budget that only covers one", async () => {
@@ -472,7 +575,7 @@ test("a visitor cannot download another visitor's post package", async () => {
     const post = insertPost(db, {
       runId: run.id,
       position: 0,
-      draft: draft("proof", "text-pov", 3),
+      draft: draft("hook", "hook-text", 0),
       channel: "linkedin",
       englishVariant: "uk",
       brandVersion: 1,

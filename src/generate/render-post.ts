@@ -12,6 +12,7 @@ import { newId } from "../ids";
 import { installNetworkGuard } from "./network-guard";
 import { pagesForDraft, type PostTemplateAssets } from "./post-templates";
 import type { PostChannel, PostDraft } from "../posts/types";
+import { HOOK_COMPOSITION_ID } from "../posts/types";
 
 export interface LayoutReport {
   overflow: boolean;
@@ -141,6 +142,22 @@ export async function renderPostPackage(
   channel: PostChannel
 ): Promise<RenderedPostPackage> {
   const built = pagesForDraft(draft, assets, channel);
+  if (built.length === 0) {
+    // Hook posts, and any legacy proof row, are copy only. No browser, no PNG, no PDF.
+    return {
+      pages: [],
+      pdfPath: null,
+      text: [draft.hook, draft.caption].filter(Boolean).join("\n\n"),
+      compositionId: draft.formatFamily === "hook" ? HOOK_COMPOSITION_ID : draft.compositionId,
+      layout: {
+        overflow: false,
+        overlap: false,
+        minBodyPx: 0,
+        contrastRatio: 0,
+        problems: [],
+      },
+    };
+  }
   fs.mkdirSync(outDir, { recursive: true });
   const browser = await chromium.launch();
   const pages: RenderedPage[] = [];
@@ -168,7 +185,7 @@ export async function renderPostPackage(
     }
 
     let pdfPath: string | null = null;
-    if (draft.formatFamily === "carousel" && channel !== "x" && pages.length >= 2) {
+    if (draft.formatFamily === "carousel" && pages.length >= 2) {
       const width = pages[0].width;
       const height = pages[0].height;
       const images = pages
