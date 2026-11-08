@@ -187,6 +187,46 @@ test("only one active run per owner is allowed at a time", async () => {
   }
 });
 
+test("POST /api/brands/:id/runs rejects channel x and a second free run points at contact", async () => {
+  const { server, db, base } = await start();
+  try {
+    const { cookie, csrf } = await login(base);
+    const brandId = await createReadyBrand(base, cookie, csrf, db);
+    const rejected = await fetch(`${base}/api/brands/${brandId}/runs`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Cookie: cookie, "X-CSRF-Token": csrf },
+      body: JSON.stringify({ task: "An X thread", channel: "x" }),
+    });
+    assert.equal(rejected.status, 400);
+    const rejectedBody = (await rejected.json()) as { error: string };
+    assert.equal(rejectedBody.error, "channel_not_supported");
+    const runs = db.prepare(`SELECT count(*) as n FROM runs WHERE brand_id = ?`).get(brandId) as { n: number };
+    assert.equal(runs.n, 0);
+
+    const first = await fetch(`${base}/api/brands/${brandId}/runs`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Cookie: cookie, "X-CSRF-Token": csrf },
+      body: JSON.stringify({ task: "LinkedIn posts", channel: "linkedin" }),
+    });
+    assert.equal(first.status, 202);
+    const saved = db.prepare(`SELECT channel FROM runs WHERE brand_id = ?`).get(brandId) as { channel: string };
+    assert.equal(saved.channel, "linkedin");
+
+    const second = await fetch(`${base}/api/brands/${brandId}/runs`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Cookie: cookie, "X-CSRF-Token": csrf },
+      body: JSON.stringify({ task: "Another run" }),
+    });
+    assert.equal(second.status, 409);
+    const body = (await second.json()) as { error: string; contactUrl: string; message: string };
+    assert.equal(body.error, "run_cap");
+    assert.equal(body.contactUrl, "https://goodspeed.studio/contact");
+    assert.match(body.message, /Talk to Goodspeed/);
+  } finally {
+    await closeServer(server);
+  }
+});
+
 test("GET /api/outputs/:id/file 404s for a nonexistent output rather than 500ing", async () => {
   const { server, base } = await start();
   try {

@@ -3,10 +3,21 @@ import type { RunRow } from "./runs";
 import type { OutputRow, ReviewRow } from "./outputs";
 import type { BrandContext } from "./import/types";
 import { computeOverallPass } from "./review/review";
+import { GOODSPEED_CONTACT_URL } from "./contact";
 
 export interface ShareOutputView {
   output: OutputRow;
   reviews: ReviewRow[];
+}
+
+export interface SharePostView {
+  formatFamily: string;
+  title: string;
+  hook: string;
+  caption: string;
+  altText: string;
+  label: string;
+  imageAssetId: string | null;
 }
 
 export interface SharePageData {
@@ -14,6 +25,7 @@ export interface SharePageData {
   logoAssetId: string | null;
   run: RunRow | null;
   outputs: ShareOutputView[];
+  posts?: SharePostView[];
   /** Present only for a non-owner (shared-link) view, so asset/output URLs can carry it. Omitted for the owner's own session view, where the session cookie already grants access. */
   viewToken: string | null;
 }
@@ -182,6 +194,33 @@ function outputApprovalLabel(reviews: ReviewRow[], needsReview: boolean): { text
   return overallPass ? { text: "Brand approved", chipClass: "status-pass" } : { text: "Draft", chipClass: "status-partial" };
 }
 
+function familyLabel(family: string): string {
+  if (family === "carousel") return "Carousel";
+  if (family === "explainer") return "Checklist";
+  if (family === "hook") return "Hook post";
+  return "Post";
+}
+
+function renderPostsSection(posts: SharePostView[], token: string | null): string {
+  if (posts.length === 0) return "";
+  const items = posts
+    .map((post) => {
+      const picture =
+        post.formatFamily === "hook" || !post.imageAssetId
+          ? `<p class="hook">${esc(post.hook)}</p>`
+          : `<img class="output-image" src="${esc(withToken(`/api/post-assets/${post.imageAssetId}`, token))}" alt="${esc(post.altText || post.title)}" loading="lazy">`;
+      return `
+        <article class="brief-card">
+          <h3>${esc(familyLabel(post.formatFamily))}</h3>
+          <p class="status-line"><span class="status-chip status-partial" role="status">${esc(post.label)}</span></p>
+          ${picture}
+          <p class="post-copy">${esc(post.caption)}</p>
+        </article>`;
+    })
+    .join("");
+  return `<section aria-labelledby="posts-heading"><h2 id="posts-heading">The posts</h2><p class="muted">LinkedIn only.</p><div class="card-grid">${items}</div></section>`;
+}
+
 function renderOutputsSection(outputs: ShareOutputView[], token: string | null, needsReview: boolean): string {
   if (outputs.length === 0) {
     return `<section aria-labelledby="outputs-heading"><h2 id="outputs-heading">The outputs</h2><p class="muted">Nothing has been generated for this brand yet.</p></section>`;
@@ -208,7 +247,7 @@ function renderOutputsSection(outputs: ShareOutputView[], token: string | null, 
 }
 
 export function renderSharePage(data: SharePageData): string {
-  const { brand, run, outputs, viewToken, logoAssetId } = data;
+  const { brand, run, outputs, viewToken, logoAssetId, posts = [] } = data;
   const context: BrandContext | null = brand.context_json ? JSON.parse(brand.context_json) : null;
   const title = context?.title ?? brand.source_url;
   const needsReview = run ? run.context_version !== brand.approved_context_version : false;
@@ -264,6 +303,7 @@ export function renderSharePage(data: SharePageData): string {
   .output-image { max-width: 100%; height: auto; border-radius: 8px; border: 1px solid rgba(36,47,40,0.12); }
   .download { display: inline-block; margin-top: 8px; font-weight: 600; }
   .post-copy { white-space: pre-wrap; background: #fff; border: 1px solid rgba(36,47,40,0.14); border-radius: 8px; padding: 12px; }
+  .hook { font-size: 1.25rem; line-height: 1.35; }
   .status-chip { display: inline-block; font-size: 12px; padding: 3px 10px; border-radius: 999px; background: #EFEBE1; }
   .status-completed, .status-ready, .status-pass { background: #DDE9B3; }
   .status-failed, .status-fail { background: #F6D2C4; }
@@ -291,12 +331,12 @@ export function renderSharePage(data: SharePageData): string {
 
     ${promptSection}
     ${renderBrandSection(brand, context, logoAssetId, viewToken)}
-    ${renderBriefsSection(outputs)}
-    ${renderOutputsSection(outputs, viewToken, needsReview)}
+    ${posts.length > 0 ? renderPostsSection(posts, viewToken) : renderBriefsSection(outputs)}
+    ${posts.length > 0 ? "" : renderOutputsSection(outputs, viewToken, needsReview)}
 
     <div class="cta">
-      <p>Want your own brand working this way?</p>
-      <a href="https://goodspeed.studio/contact">Talk to Goodspeed</a>
+      <p>Want a person to take this further?</p>
+      <a href="${esc(GOODSPEED_CONTACT_URL)}">Talk to Goodspeed</a>
     </div>
   </main>
 </body>

@@ -13,7 +13,7 @@ import { detectSiteLanguage } from "./language";
 import { detectEnglishVariant } from "./english-variant";
 import { listOwnedUploads } from "./imagery";
 import { listPostsForRun, listPostAssets, getPost, postLabel } from "./posts/store";
-import { editPostCopy, undoPost, changePostLayout, regenerateOnePost } from "./posts/mutate";
+import { editPostCopy, undoPost, changePostLayout, regenerateOnePost, claimRegenerate, releaseRegenerateClaim, RegenerateCapError } from "./posts/mutate";
 import { buildPostZip, buildRunZip } from "./posts/package";
 import { rerenderPost } from "./jobs/run-posts-job";
 import { generatePostConcepts } from "./posts/concepts";
@@ -45,6 +45,7 @@ import { buildBrandMarkdown } from "./snapshot";
 import { checkUploadAgainstBrand, UploadDecodeError } from "./review/upload-check";
 import { createLead } from "./leads";
 import { notifySlack } from "./slack";
+import { GOODSPEED_CONTACT_URL } from "./contact";
 import type { ApprovedBrandContext } from "./llm";
 import type { BrandContext } from "./import/types";
 
@@ -124,7 +125,13 @@ export function createApp() {
       status: b.status,
       createdAt: b.created_at,
     }));
-    res.json({ brands });
+    const freeRun = db
+      .prepare(
+        `SELECT 1 FROM runs r JOIN brands b ON b.id = r.brand_id
+         WHERE b.owner_id = ? AND COALESCE(r.mode, 'legacy') = 'posts' LIMIT 1`
+      )
+      .get(req.auth!.ownerId);
+    res.json({ brands, freeRunUsed: Boolean(freeRun) });
   });
 
   app.get("/api/brands/:id", requireAuth, (req, res) => {
@@ -449,6 +456,20 @@ export function createApp() {
     const outputs = run
       ? listOutputsForRun(db, run.id).map((output) => ({ output, reviews: listReviewsForOutput(db, output.id) }))
       : [];
+    const posts = run
+      ? listPostsForRun(db, run.id).map((post) => {
+          const image = listPostAssets(db, post.id).find((asset) => asset.kind === "png" || asset.kind === "page_png");
+          return {
+            formatFamily: post.format_family,
+            title: post.title,
+            hook: post.hook,
+            caption: post.caption,
+            altText: post.alt_text,
+            label: postLabel(post, brand.approved_context_version),
+            imageAssetId: post.format_family === "hook" ? null : image?.id ?? null,
+          };
+        })
+      : [];
 
     const approved: { logoAssetId: string | null } | null = brand.approved_context_json
       ? JSON.parse(brand.approved_context_json)
@@ -462,6 +483,7 @@ export function createApp() {
         logoAssetId: approved?.logoAssetId ?? null,
         run,
         outputs,
+        posts,
         viewToken,
       })
     );
@@ -536,7 +558,30 @@ export function createApp() {
       : savedVariant === "us" || savedVariant === "uk"
         ? savedVariant
         : "uk";
-    const channel = req.body?.channel === "x" ? "x" : "linkedin";
+    const channelRequested = req.body?.channel;
+    if (channelRequested === "x") {
+      res.status(400).json({
+        error: "channel_not_supported",
+        message: "This free tool writes LinkedIn posts only.",
+      });
+      return;
+    }
+    const channel = "linkedin" as const;
+
+    const alreadyRan = db
+      .prepare(
+        `SELECT 1 FROM runs r JOIN brands b ON b.id = r.brand_id
+         WHERE b.owner_id = ? AND COALESCE(r.mode, 'legacy') = 'posts' LIMIT 1`
+      )
+      .get(ownerId);
+    if (alreadyRan) {
+      res.status(409).json({
+        error: "run_cap",
+        contactUrl: GOODSPEED_CONTACT_URL,
+        message: "This workspace already used its free run. Talk to Goodspeed to go further.",
+      });
+      return;
+    }
 
     if (spendUsd(db) >= config.GLOBAL_DAILY_SPEND_USD || spendUsd(db, ownerId) >= config.PER_VISITOR_DAILY_SPEND_USD) {
       res.status(429).json({
@@ -651,7 +696,6 @@ export function createApp() {
         hook: post.hook,
         hookAlternatives: JSON.parse(post.hook_alternatives_json),
         caption: post.caption,
-        xCaption: post.x_caption,
         altText: post.alt_text,
         rationale: post.rationale,
         formatNote: post.format_note,
@@ -659,6 +703,7 @@ export function createApp() {
         pageCount: (JSON.parse(post.pages_json) as unknown[]).length,
         status: post.status,
         revision: post.revision,
+        regenerateCount: post.regenerate_count ?? 0,
         label,
         automatedChecksPassed: label === "Checks passed",
         humanSignOff: false,
@@ -876,7 +921,6 @@ export function createApp() {
         caption: typeof req.body?.caption === "string" ? req.body.caption : undefined,
         altText: typeof req.body?.altText === "string" ? req.body.altText : undefined,
         hook: typeof req.body?.hook === "string" ? req.body.hook : undefined,
-        xCaption: typeof req.body?.xCaption === "string" ? req.body.xCaption : undefined,
       });
       res.json({ id: post.id, revision: post.revision, label: postLabel(post, found.brand.approved_context_version) });
     } catch (err) {
@@ -932,6 +976,29 @@ export function createApp() {
       res.status(404).json({ error: "not_found" });
       return;
     }
+    if ((found.post.regenerate_count ?? 0) >= 1) {
+      res.status(409).json({
+        error: "regenerate_cap",
+        contactUrl: GOODSPEED_CONTACT_URL,
+        message: "This post has already been regenerated once. Talk to Goodspeed to go further.",
+      });
+      return;
+    }
+    let claimed = false;
+    try {
+      claimRegenerate(db, found.post.id);
+      claimed = true;
+    } catch (err) {
+      if (err instanceof RegenerateCapError) {
+        res.status(409).json({
+          error: err.code,
+          contactUrl: err.contactUrl,
+          message: err.message,
+        });
+        return;
+      }
+      throw err;
+    }
     const reservation = tryReserve(db, {
       ownerId: req.auth!.ownerId,
       runId: found.run.id,
@@ -940,6 +1007,7 @@ export function createApp() {
       usd: config.REGENERATE_RESERVATION_USD,
     });
     if (!reservation.ok) {
+      releaseRegenerateClaim(db, found.post.id);
       res.status(429).json({ error: "spend_cap_reached", pricing: "placeholder_estimate", message: "Today's free limit has been reached." });
       return;
     }
@@ -949,23 +1017,26 @@ export function createApp() {
       const ledger = found.run.ledger_json ? (JSON.parse(found.run.ledger_json) as LedgerEntry[]) : [];
       const pack = await generatePostConcepts({
         task: `${found.run.task}. Replace only the ${found.post.format_family} post. ${typeof req.body?.instruction === "string" ? req.body.instruction : ""}`,
-        channel: found.post.channel,
-        englishVariant: found.post.english_variant,
+        englishVariant: found.post.english_variant === "us" ? "us" : "uk",
         voiceNotes: approved.voiceNotes ?? "",
         ledger,
         colours: approved.colours ?? [],
         fonts: approved.fonts ?? [],
         logoAssetId: approved.logoAssetId ?? null,
-        approvedImageIds: approved.approvedImageAssetIds ?? [],
         businessSummary: raw?.description ?? "",
         audienceHint: "",
-        count: 3,
       });
       const replacement = pack.posts.find((draft) => draft.formatFamily === found.post.format_family);
       if (!replacement) throw new Error("The new draft did not include this post.");
-      const post = await regenerateOnePost(db, found.post.id, replacement);
-      res.json({ id: post.id, revision: post.revision, status: post.status });
+      const post = await regenerateOnePost(db, found.post.id, replacement, {}, { alreadyClaimed: true });
+      claimed = false;
+      res.json({ id: post.id, revision: post.revision, status: post.status, regenerateCount: post.regenerate_count });
     } catch (err) {
+      if (claimed) releaseRegenerateClaim(db, found.post.id);
+      if (err instanceof RegenerateCapError) {
+        res.status(409).json({ error: err.code, contactUrl: err.contactUrl, message: err.message });
+        return;
+      }
       res.status(500).json({ error: "regenerate_failed", message: err instanceof Error ? err.message : "Could not regenerate this post." });
     } finally {
       releaseReservation(db, reservation.id);

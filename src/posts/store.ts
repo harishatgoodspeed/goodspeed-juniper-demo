@@ -34,6 +34,7 @@ export interface PostRow {
   review_brand_version: number | null;
   review_passed: number;
   error: string | null;
+  regenerate_count: number;
   created_at: string;
   updated_at: string;
 }
@@ -59,7 +60,6 @@ export function draftFromRow(row: PostRow): PostDraft {
     hook: row.hook,
     hookAlternatives: JSON.parse(row.hook_alternatives_json) as string[],
     caption: row.caption,
-    xCaption: row.x_caption ?? "",
     altText: row.alt_text,
     pages: JSON.parse(row.pages_json) as PostPageCopy[],
     claims: JSON.parse(row.claims_json) as SourceClaim[],
@@ -105,7 +105,7 @@ export function insertPost(
     fields.draft.hook,
     JSON.stringify(fields.draft.hookAlternatives),
     fields.draft.caption,
-    fields.draft.xCaption,
+    "",
     fields.draft.altText,
     fields.draft.rationale,
     fields.formatNote,
@@ -159,6 +159,7 @@ export function updatePostFields(
     review_revision: number | null;
     review_brand_version: number | null;
     review_passed: number;
+    regenerate_count: number;
   }>,
   bumpRevision: boolean
 ): void {

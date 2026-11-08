@@ -57,7 +57,7 @@ textarea { max-width: 100%; }
 .row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 12px 0; }
 .error { color: var(--danger); }
 .hint, .eyebrow { color: var(--muted); font-size: 0.92rem; }
-.preview, .brand-card, .post-card, .ladder, .disclosure {
+.preview, .brand-card, .post-card, .disclosure {
   background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 18px;
 }
 .preview { margin-top: 28px; max-width: 420px; }
@@ -78,9 +78,10 @@ textarea { max-width: 100%; }
 .badge.fail { color: var(--danger); }
 .caption { white-space: pre-wrap; font-size: 0.95rem; }
 .pages { font-size: 0.85rem; color: var(--muted); }
+.hook-preview { font-size: 1.2rem; line-height: 1.35; margin: 0; }
+.contact-line { margin-top: 28px; }
+.contact-line a { font-weight: 650; }
 details.checks { font-size: 0.85rem; color: var(--muted); }
-.ladder { margin-top: 28px; }
-.ladder ol { padding-left: 18px; }
 
 .editor { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-top: 12px; }
 .editor-tabs { display: none; }

@@ -25,3 +25,28 @@ test("outputs.type accepts instagram_image and x_image after migration 0002, not
     assert.equal(getOutput(db, output.id)?.type, type);
   }
 });
+
+test("posts.format_family accepts hook and still accepts legacy proof, and regenerate_count defaults to 0", () => {
+  const db = openTestDb();
+  const ownerId = createAnonymousOwner(db);
+  const brand = createBrand(db, ownerId, "https://example.com");
+  const run = createRun(db, brand.id, "Posts", null, 1, { mode: "posts", englishVariant: "uk", channel: "linkedin" });
+  const insert = db.prepare(
+    `INSERT INTO posts (
+      id, run_id, position, format_family, composition_id, english_variant,
+      title, hook, hook_alternatives_json, caption, alt_text,
+      source_refs_json, claims_json, pages_json, palette_json, fonts_json, image_asset_ids_json, brand_version
+    ) VALUES (?, ?, ?, ?, 'layout', 'uk', 'Title', 'Hook', '[]', 'Caption', 'Alt', '[]', '[]', '[]', '[]', '[]', '[]', 1)`
+  );
+  ["carousel", "explainer", "hook", "proof"].forEach((family, index) => {
+    insert.run(`post_${family}`, run.id, index, family);
+  });
+  const hook = db.prepare(`SELECT format_family, regenerate_count FROM posts WHERE id = 'post_hook'`).get() as {
+    format_family: string;
+    regenerate_count: number;
+  };
+  assert.equal(hook.format_family, "hook");
+  assert.equal(hook.regenerate_count, 0);
+  const proof = db.prepare(`SELECT format_family FROM posts WHERE id = 'post_proof'`).get() as { format_family: string };
+  assert.equal(proof.format_family, "proof");
+});

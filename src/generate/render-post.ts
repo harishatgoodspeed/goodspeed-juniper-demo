@@ -140,6 +140,22 @@ export async function renderPostPackage(
   outDir: string,
   channel: PostChannel
 ): Promise<RenderedPostPackage> {
+  if (draft.formatFamily === "hook" || channel === "x") {
+    fs.mkdirSync(outDir, { recursive: true });
+    return {
+      pages: [],
+      pdfPath: null,
+      text: [draft.hook, draft.caption].filter(Boolean).join("\n"),
+      compositionId: draft.formatFamily === "hook" ? "hook-text" : draft.compositionId,
+      layout: {
+        overflow: false,
+        overlap: false,
+        minBodyPx: 0,
+        contrastRatio: 0,
+        problems: [],
+      },
+    };
+  }
   const built = pagesForDraft(draft, assets, channel);
   fs.mkdirSync(outDir, { recursive: true });
   const browser = await chromium.launch();
@@ -168,7 +184,7 @@ export async function renderPostPackage(
     }
 
     let pdfPath: string | null = null;
-    if (draft.formatFamily === "carousel" && channel !== "x" && pages.length >= 2) {
+    if (draft.formatFamily === "carousel" && pages.length >= 2) {
       const width = pages[0].width;
       const height = pages[0].height;
       const images = pages

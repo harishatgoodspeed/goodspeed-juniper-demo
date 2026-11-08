@@ -9,6 +9,8 @@
   let selectedColours = [];
   let selectedFonts = [];
   let editingPostId = null;
+  let freeRunUsed = false;
+  const CONTACT_URL = "https://goodspeed.studio/contact";
 
   function $(id) { return document.getElementById(id); }
   function show(id) {
@@ -35,6 +37,7 @@
       const error = new Error(message);
       error.status = res.status;
       error.code = data && data.error;
+      error.contactUrl = data && data.contactUrl;
       throw error;
     }
     return data;
@@ -65,9 +68,23 @@
     }
   }
 
+  function showTalk(node, lead) {
+    node.hidden = false;
+    node.textContent = "";
+    if (lead) node.appendChild(document.createTextNode(lead + " "));
+    const link = document.createElement("a");
+    link.href = CONTACT_URL;
+    link.textContent = "Talk to Goodspeed";
+    node.appendChild(link);
+  }
+
   $("importForm").addEventListener("submit", async (event) => {
     event.preventDefault();
     $("importError").hidden = true;
+    if (freeRunUsed) {
+      showTalk($("runCap"), "This workspace already used its free run.");
+      return;
+    }
     const url = $("siteUrl").value.trim();
     try {
       const started = await api("/api/brands", { method: "POST", body: JSON.stringify({ url }) });
@@ -153,41 +170,18 @@
 
   $("backToUrl").addEventListener("click", () => show("urlView"));
 
-  $("ownedForm").addEventListener("submit", async (event) => {
-    event.preventDefault();
-    const file = $("ownedFile").files && $("ownedFile").files[0];
-    if (!file) return;
-    if (!$("ownConfirm").checked) {
-      $("ownedStatus").textContent = "Tick the box to confirm you own the image.";
-      return;
-    }
-    const dataUrl = await new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onload = () => resolve(String(reader.result || ""));
-      reader.onerror = () => reject(new Error("Could not read that file."));
-      reader.readAsDataURL(file);
-    });
-    const base64 = dataUrl.slice(dataUrl.indexOf(",") + 1);
-    try {
-      await api("/api/brands/" + brandId + "/owned-images", {
-        method: "POST",
-        body: JSON.stringify({ mimeType: file.type, imageBase64: base64, ownershipConfirmed: true }),
-      });
-      $("ownedStatus").textContent = "Image added. It will only be used because you confirmed you own it.";
-    } catch (err) {
-      $("ownedStatus").textContent = err.message;
-    }
-  });
-
   $("approveBtn").addEventListener("click", async () => {
     $("approveError").hidden = true;
+    if (freeRunUsed) {
+      showTalk($("approveError"), "This workspace already used its free run.");
+      return;
+    }
     if (brandData && brandData.siteLanguage === "other" && !$("confirmEnglish").checked) {
       $("approveError").hidden = false;
       $("approveError").textContent = "This site does not look like English. Tick the box if you still want English posts.";
       return;
     }
     const englishVariant = document.querySelector('input[name="english"]:checked').value;
-    const channel = document.querySelector('input[name="channel"]:checked').value;
     const task = $("runTask").value.trim() || "Three useful posts from this website";
     try {
       await api("/api/brands/" + brandId, {
@@ -199,36 +193,32 @@
             fonts: selectedFonts,
             voiceNotes: $("voiceNotes").value.trim(),
             englishVariant,
-            approvedImageAssetIds: (brandData.approvedContext && brandData.approvedContext.approvedImageAssetIds) || [],
+            approvedImageAssetIds: [],
           },
         }),
       });
-      brandData = await api("/api/brands/" + brandId);
-      const imageIds = (await api("/api/brands/" + brandId + "/owned-images")).images.map((image) => image.id);
-      if (imageIds.length) {
-        await api("/api/brands/" + brandId, {
-          method: "PATCH",
-          body: JSON.stringify({
-            approvedContext: Object.assign({}, brandData.approvedContext, { approvedImageAssetIds: imageIds, englishVariant }),
-          }),
-        });
-      }
       const started = await api("/api/brands/" + brandId + "/runs", {
         method: "POST",
         body: JSON.stringify({
           task,
           englishVariant,
-          channel,
+          channel: "linkedin",
           confirmEnglish: $("confirmEnglish").checked,
         }),
       });
       runId = started.run.id;
+      freeRunUsed = true;
       show("resultsView");
-      $("ladder").hidden = true;
+      $("nextStep").hidden = true;
       $("keepBar").hidden = true;
       await pollRun();
     } catch (err) {
       $("approveError").hidden = false;
+      if (err.code === "run_cap" || err.contactUrl) {
+        freeRunUsed = true;
+        showTalk($("approveError"), "This workspace already used its free run.");
+        return;
+      }
       $("approveError").textContent = err.message;
     }
   });
@@ -267,20 +257,35 @@
     posts.forEach((post) => grid.appendChild(postCard(post)));
     const anyReady = posts.some((post) => post.status === "ready");
     $("keepBar").hidden = !anyReady;
-    $("ladder").hidden = !anyReady;
+    $("nextStep").hidden = !anyReady;
     $("snapshotLink").href = "/api/brands/" + brandId + "/snapshot.md";
+  }
+
+  function familyName(family) {
+    if (family === "carousel") return "Carousel";
+    if (family === "explainer") return "Checklist";
+    if (family === "hook") return "Hook post";
+    return "Post";
+  }
+
+  function imageAsset(post) {
+    return post.assets && post.assets.find((asset) => asset.kind === "png" || asset.kind === "page_png");
   }
 
   function postCard(post) {
     const card = el("article", { class: "post-card" });
     card.appendChild(el("div", { class: "row" }, [
-      el("strong", { text: post.formatFamily === "carousel" ? "Carousel" : post.formatFamily === "explainer" ? "Saveable image" : "Proof led post" }),
+      el("strong", { text: familyName(post.formatFamily) }),
       badge(post.label),
     ]));
-    const preview = post.assets && post.assets.find((asset) => asset.kind === "png" || asset.kind === "page_png" || asset.kind === "x_png");
-    if (preview) card.appendChild(el("img", { src: "/api/post-assets/" + preview.id, alt: post.altText || post.title }));
-    else if (post.status === "failed") card.appendChild(el("p", { class: "hint", text: post.error || "This post did not render." }));
-    else if (post.status !== "ready") card.appendChild(el("p", { class: "hint", text: "Still working on this one." }));
+    if (post.formatFamily === "hook") {
+      card.appendChild(el("p", { class: "hook-preview", text: post.hook || "" }));
+    } else {
+      const preview = imageAsset(post);
+      if (preview) card.appendChild(el("img", { src: "/api/post-assets/" + preview.id, alt: post.altText || post.title }));
+      else if (post.status === "failed") card.appendChild(el("p", { class: "hint", text: post.error || "This post did not render." }));
+      else if (post.status !== "ready") card.appendChild(el("p", { class: "hint", text: "Still working on this one." }));
+    }
     if (post.formatFamily === "carousel") card.appendChild(el("p", { class: "pages", text: (post.pageCount || 0) + " pages" }));
     card.appendChild(el("p", { class: "hint", text: post.formatNote || "Evergreen format" }));
     card.appendChild(el("p", { class: "caption", text: post.caption || "" }));
@@ -311,8 +316,7 @@
 
   const layouts = {
     carousel: ["carousel-steps", "carousel-checklist"],
-    explainer: ["explainer-framework", "explainer-comparison"],
-    proof: ["text-pov", "text-columns", "proof-annotation", "proof-split"],
+    explainer: ["explainer-framework"],
   };
 
   function openEditor(postId) {
@@ -331,11 +335,19 @@
     });
     const layout = $("layoutSelect");
     layout.innerHTML = "";
-    (layouts[post.formatFamily] || []).forEach((id) => {
+    const options = layouts[post.formatFamily] || [];
+    options.forEach((id) => {
       const option = el("option", { value: id, text: id.replaceAll("-", " ") });
       if (id === post.compositionId) option.selected = true;
       layout.appendChild(option);
     });
+    $("layoutBlock").hidden = options.length < 2;
+    const textOnly = post.formatFamily === "hook";
+    $("altField").hidden = textOnly;
+    $("altLabel").hidden = textOnly;
+    const usedRegen = (post.regenerateCount || 0) >= 1;
+    $("regenBtn").hidden = usedRegen;
+    $("regenCap").hidden = !usedRegen;
     renderEditorPreview(post);
     show("editorView");
   }
@@ -343,8 +355,12 @@
   function renderEditorPreview(post) {
     const box = $("editorPreview");
     box.innerHTML = "";
-    const preview = post.assets && post.assets.find((asset) => asset.kind === "png" || asset.kind === "page_png" || asset.kind === "x_png");
-    if (preview) box.appendChild(el("img", { src: "/api/post-assets/" + preview.id + "?v=" + post.revision, alt: post.altText || "" }));
+    if (post.formatFamily === "hook") {
+      box.appendChild(el("p", { class: "hook-preview", text: post.hook || "" }));
+    } else {
+      const preview = imageAsset(post);
+      if (preview) box.appendChild(el("img", { src: "/api/post-assets/" + preview.id + "?v=" + post.revision, alt: post.altText || "" }));
+    }
     if (post.formatFamily === "carousel") box.appendChild(el("p", { class: "pages", text: (post.pageCount || 0) + " pages" }));
     $("editorCaption").textContent = $("captionField").value;
   }
@@ -391,6 +407,12 @@
 
   $("regenBtn").addEventListener("click", async () => {
     $("editorError").hidden = true;
+    const current = (runData.posts || []).find((item) => item.id === editingPostId);
+    if (current && (current.regenerateCount || 0) >= 1) {
+      $("regenBtn").hidden = true;
+      $("regenCap").hidden = false;
+      return;
+    }
     $("editorStatus").textContent = "Regenerating this post only.";
     try {
       await api("/api/posts/" + editingPostId + "/regenerate", {
@@ -400,6 +422,13 @@
       await refreshEditor();
       $("editorStatus").textContent = "This post was replaced. The other two were not.";
     } catch (err) {
+      if (err.code === "regenerate_cap" || err.contactUrl) {
+        $("regenBtn").hidden = true;
+        $("regenCap").hidden = false;
+        $("editorStatus").textContent = "";
+        showTalk($("editorError"), "This post has already been regenerated once.");
+        return;
+      }
       $("editorError").hidden = false;
       $("editorError").textContent = err.message;
     }
@@ -434,24 +463,6 @@
     window.location.href = "/api/runs/" + runId + "/package.zip";
   });
 
-  $("leadForm").addEventListener("submit", async (event) => {
-    event.preventDefault();
-    try {
-      await api("/api/brands/" + brandId + "/leads", {
-        method: "POST",
-        body: JSON.stringify({
-          email: $("leadEmail").value.trim(),
-          preferredTool: $("leadTool").value.trim(),
-          notes: $("leadNotes").value.trim(),
-          consent: $("leadConsent").checked,
-        }),
-      });
-      $("leadStatus").textContent = "Thank you. We will be in touch.";
-    } catch (err) {
-      $("leadStatus").textContent = err.message;
-    }
-  });
-
   $("logoutBtn").addEventListener("click", async () => {
     await api("/api/logout", { method: "POST", body: JSON.stringify({}) });
     window.location.reload();
@@ -459,7 +470,9 @@
 
   async function boot() {
     await api("/api/session");
-    const { brands } = await api("/api/brands");
+    const listed = await api("/api/brands");
+    freeRunUsed = Boolean(listed.freeRunUsed);
+    const brands = listed.brands || [];
     if (!brands.length) {
       show("urlView");
       return;

@@ -3,11 +3,8 @@ import path from "node:path";
 import { buildZip, type ZipEntry } from "../zip-safe";
 import type { PostAssetRow, PostRow } from "./store";
 
-export function postPackageEntries(post: PostRow, assets: PostAssetRow[], ledger: { id: string; sourceUrl: string }[]): ZipEntry[] {
-  const entries: ZipEntry[] = [
-    { name: "caption.txt", data: post.caption },
-    { name: "x-post.txt", data: post.x_caption ?? "" },
-    { name: "alt.txt", data: post.alt_text },
+function sharedNotes(post: PostRow, ledger: { id: string; sourceUrl: string }[]): ZipEntry[] {
+  return [
     { name: "brand-version.txt", data: String(post.brand_version) },
     { name: "revision.txt", data: String(post.revision) },
     {
@@ -26,14 +23,27 @@ export function postPackageEntries(post: PostRow, assets: PostAssetRow[], ledger
       ),
     },
   ];
+}
+
+export function postPackageEntries(post: PostRow, assets: PostAssetRow[], ledger: { id: string; sourceUrl: string }[]): ZipEntry[] {
+  if (post.format_family === "hook") {
+    return [{ name: "caption.txt", data: post.caption }, { name: "hook.txt", data: post.hook }, ...sharedNotes(post, ledger)];
+  }
+
+  const entries: ZipEntry[] = [
+    { name: "caption.txt", data: post.caption },
+    { name: "alt.txt", data: post.alt_text },
+    ...sharedNotes(post, ledger),
+  ];
   const ordered = [...assets].sort((a, b) => (a.page_index ?? 0) - (b.page_index ?? 0));
   for (const asset of ordered) {
+    if (asset.kind === "x_png") continue;
     if (!asset.file_path || !fs.existsSync(asset.file_path)) continue;
     const base =
       asset.kind === "pdf"
         ? "carousel.pdf"
-        : asset.kind === "x_png"
-          ? "x.png"
+        : post.format_family === "explainer"
+          ? "checklist.png"
           : `page-${String((asset.page_index ?? 0) + 1).padStart(2, "0")}.png`;
     entries.push({ name: base, data: fs.readFileSync(asset.file_path) });
   }
