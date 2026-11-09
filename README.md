@@ -333,6 +333,46 @@ Several real bugs were found and fixed along the way, not by `npm test`:
   `graph.facebook.com` `ads_archive`. Without that token the channel is
   marked Not assessed. The library only covers ads shown in the EU.
 
+## Deploy on Railway
+
+`railway.json` selects the Dockerfile. A Nixpacks or Railpack build will not
+install Chromium or Tesseract, and the audit will fail when it launches a
+browser or reads a screenshot.
+
+The image runs `npx playwright install --with-deps chromium` during the
+build, so the Chromium binary matches the `playwright` version in
+`package.json`. It also installs `tesseract-ocr`. Without Tesseract, a
+screenshot still yields a palette, and the name and tagline stay empty.
+`PLAYWRIGHT_BROWSERS_PATH` is `/root/.cache/ms-playwright`.
+
+Mount a volume and point `DATABASE_PATH` and `ASSET_DIR` at it. SQLite and
+uploaded files are lost on every deploy if they stay on the container disk.
+
+### Environment variables the deploy needs
+
+Required in production (`NODE_ENV=production` refuses to boot without the secret):
+
+| Variable | Purpose |
+| --- | --- |
+| `SESSION_SECRET` | Signs the anonymous session cookie. Generate 32 random bytes as hex. |
+| `NODE_ENV` | Set to `production`. |
+| `APP_BASE_URL` | Public `https` origin of this service. |
+| `DATABASE_PATH` | SQLite file on the volume, for example `/data/app.db`. |
+| `ASSET_DIR` | File storage on the volume, for example `/data/assets`. |
+
+`PORT` is injected by Railway. Do not set it unless you are running outside Railway.
+
+Optional:
+
+| Variable | Purpose |
+| --- | --- |
+| `META_AD_LIBRARY_TOKEN` | Official Meta Ad Library token (`ads_archive`). When unset, that channel is marked Not assessed. The library only covers ads shown in the EU. |
+| `ANTHROPIC_API_KEY` | Brief generation and copy review. The brand audit does not call it. |
+| `ANTHROPIC_MODEL` | Defaults to `claude-sonnet-5-5`. |
+| `SLACK_WEBHOOK_URL` | Lead notification. No-op when unset. |
+
+Everything else in `.env.example` has a default in `src/config.ts`.
+
 ## Environment variables
 
 See `.env.example` for the full list with descriptions. All of `PORT`,
