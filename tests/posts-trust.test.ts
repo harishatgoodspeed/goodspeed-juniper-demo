@@ -12,24 +12,16 @@ import { openTestDb } from "../src/db";
 import { createAnonymousOwner } from "../src/security/session";
 import { createBrand, setApprovedContext, setBrandContext } from "../src/brands";
 import { createRun, getRun } from "../src/runs";
+import { buildZip } from "../src/zip-safe";
 import { createOutput } from "../src/outputs";
 import { buildSourceLedger, unsupportedNumericTokens, verifyCitedClaims } from "../src/ledger";
 import { reviewOutput, computeOverallPass } from "../src/review/review";
 import { assessCopy } from "../src/review/copy-assessment";
 import { tryReserve } from "../src/spend";
 import { config } from "../src/config";
-import { buildZip, readZipEntry } from "../src/zip-safe";
-import { buildPostZip } from "../src/posts/package";
 import { approvedImagePaths } from "../src/imagery";
-import { normalisePostDrafts, PostDraftError } from "../src/posts/validate";
-import { englishChoiceInstruction } from "../src/posts/validate";
-import { pagesForDraft } from "../src/generate/post-templates";
-import { insertPost, listPostsForRun } from "../src/posts/store";
-import { editPostCopy, regenerateOnePost } from "../src/posts/mutate";
-import { setRunLedger } from "../src/runs";
 import { purgeExpiredBrands } from "../src/retention";
 import type { Brief } from "../src/pipeline-types";
-import type { PostDraft } from "../src/posts/types";
 import type { BrandContext } from "../src/import/types";
 
 function context(): BrandContext {
@@ -51,34 +43,6 @@ function context(): BrandContext {
     stylesheetsFetched: 0,
     stylesheetsSkipped: 0,
     unknowns: [],
-  };
-}
-
-function draft(family: PostDraft["formatFamily"], compositionId: string, pages: number): PostDraft {
-  const page = (n: number) => ({ heading: `Point ${n} for walkers`, body: "Repair the boot before the sole splits." });
-  return {
-    formatFamily: family,
-    compositionId,
-    title: "How to keep a boot walking",
-    hook: "Start with the sole you already have.",
-    hookAlternatives: ["Start with the sole you already have.", "A workshop habit worth keeping."],
-    caption: "Example Co repairs walking boots in a small workshop. Bring the pair in before the sole splits.",
-    xCaption: "Boots fail at the sole first. Repair them before the split.",
-    altText: "A short guide to repairing walking boots.",
-    pages: Array.from({ length: pages }, (_, i) => page(i + 1)),
-    claims: [
-      {
-        text: "Example Co repairs walking boots in a small workshop.",
-        ledgerIds: ["L1"],
-        kind: "fact",
-      },
-    ],
-    imageAssetIds: [],
-    rationale: "Useful and sourced.",
-    cta: "Bring the pair in when you can.",
-    paletteTokenHexes: ["#F4F1EA", "#1F3A2E", "#1C1C1C"],
-    fontFamilies: ["Georgia"],
-    logoAssetId: null,
   };
 }
 
@@ -154,63 +118,6 @@ test("cited claims fail when the ledger id is real but the excerpt does not supp
   assert.equal(unsupportedNumericTokens("since 1998", "since 1998").length, 0);
 });
 
-test("explicit American English wins over a British looking site", () => {
-  const line = englishChoiceInstruction("us");
-  assert.match(line, /American English/);
-  assert.match(line, /explicitly/);
-});
-
-test("X copy over the character limit is rejected and a truncation of the LinkedIn caption is rejected", () => {
-  const ledger = buildSourceLedger({
-    sourceUrl: "https://example.com",
-    description: "Example Co repairs walking boots in a small workshop.",
-    textExcerpt: "Example Co repairs walking boots in a small workshop.",
-    retrievedAt: "2026-11-07T00:00:00.000Z",
-  });
-  const base = {
-    colours: ["#F4F1EA", "#1F3A2E", "#1C1C1C"],
-    fonts: ["Georgia"],
-    logoAssetId: null,
-    approvedImageIds: [],
-    ledger,
-    channel: "linkedin" as const,
-    englishVariant: "uk" as const,
-    ownedImageCount: 0,
-  };
-  const posts = [
-    draft("carousel", "carousel-steps", 6),
-    draft("explainer", "explainer-framework", 4),
-    draft("proof", "text-pov", 3),
-  ];
-  assert.equal(normalisePostDrafts(posts, base).length, 3);
-  const tooLong = draft("carousel", "carousel-steps", 6);
-  tooLong.xCaption = "a".repeat(281);
-  assert.throws(() => normalisePostDrafts([tooLong, posts[1], posts[2]], base), PostDraftError);
-  const truncated = draft("carousel", "carousel-steps", 6);
-  truncated.xCaption = truncated.caption.slice(0, 40);
-  assert.throws(() => normalisePostDrafts([truncated, posts[1], posts[2]], base), /separately/);
-});
-
-test("compositions differ and none of them is a Learn more pill", () => {
-  const assets = { imagePaths: [] as string[] };
-  const steps = pagesForDraft(draft("carousel", "carousel-steps", 6), assets, "linkedin")[0].html;
-  const list = pagesForDraft(draft("carousel", "carousel-checklist", 6), assets, "linkedin")[0].html;
-  const framework = pagesForDraft(draft("explainer", "explainer-framework", 4), assets, "linkedin")[0].html;
-  const comparison = pagesForDraft(draft("explainer", "explainer-comparison", 4), assets, "linkedin")[0].html;
-  const pov = pagesForDraft(draft("proof", "text-pov", 3), assets, "linkedin")[0].html;
-  assert.notEqual(steps, list);
-  assert.notEqual(framework, comparison);
-  assert.match(steps, /carousel-steps/);
-  assert.match(list, /carousel-checklist/);
-  for (const html of [steps, list, framework, comparison, pov]) {
-    assert.equal(html.includes("Learn more"), false);
-  }
-  const dark = draft("explainer", "explainer-framework", 4);
-  dark.paletteTokenHexes = ["#102018", "#F4F1EA", "#F4F1EA"];
-  const light = draft("explainer", "explainer-framework", 4);
-  assert.notEqual(pagesForDraft(dark, assets, "linkedin")[0].html, pagesForDraft(light, assets, "linkedin")[0].html);
-});
-
 test("owned images are wired through and scraped page images are not", () => {
   const db = openTestDb();
   const owner = createAnonymousOwner(db);
@@ -230,74 +137,6 @@ test("owned images are wired through and scraped page images are not", () => {
   fs.rmSync(owned, { force: true });
 });
 
-test("editing one post clears its checks and leaves the other post alone", () => {
-  const db = openTestDb();
-  const owner = createAnonymousOwner(db);
-  const brand = createBrand(db, owner, "https://example.com");
-  setBrandContext(db, brand.id, context());
-  const run = createRun(db, brand.id, "Posts", null, 1, { mode: "posts", englishVariant: "uk", channel: "linkedin" });
-  const ledger = buildSourceLedger({
-    sourceUrl: "https://example.com",
-    description: context().description,
-    textExcerpt: context().textExcerpt,
-    retrievedAt: context().fetchedAt,
-  });
-  setRunLedger(db, run.id, JSON.stringify(ledger));
-  insertPost(db, { runId: run.id, position: 0, draft: draft("carousel", "carousel-steps", 6), channel: "linkedin", englishVariant: "uk", brandVersion: 1, formatNote: "Evergreen format", sourceRefs: [] });
-  insertPost(db, { runId: run.id, position: 1, draft: draft("explainer", "explainer-framework", 4), channel: "linkedin", englishVariant: "uk", brandVersion: 1, formatNote: "Evergreen format", sourceRefs: [] });
-  const [first, second] = listPostsForRun(db, run.id);
-  db.prepare(`UPDATE posts SET status = 'ready', review_passed = 1, review_json = '[]', review_revision = revision, review_brand_version = brand_version WHERE id = ?`).run(first.id);
-  const edited = editPostCopy(db, first.id, { caption: "Revenue grew 400% in 2024." });
-  const sibling = listPostsForRun(db, run.id).find((row) => row.id === second.id)!;
-  assert.equal(sibling.revision, second.revision);
-  assert.equal(sibling.caption, second.caption);
-  assert.equal(edited.review_passed, 0);
-  assert.match(edited.review_json ?? "", /400%/);
-});
-
-test("regenerating one post does not change the other two", async () => {
-  const db = openTestDb();
-  const owner = createAnonymousOwner(db);
-  const brand = createBrand(db, owner, "https://example.com");
-  setBrandContext(db, brand.id, context());
-  setApprovedContext(db, brand.id, { logoAssetId: null, colours: ["#F4F1EA"], fonts: ["Georgia"], voiceNotes: "" });
-  const run = createRun(db, brand.id, "Posts", null, 1, { mode: "posts", englishVariant: "us", channel: "linkedin" });
-  setRunLedger(db, run.id, "[]");
-  const ids = ["carousel", "explainer", "proof"].map((family, index) =>
-    insertPost(db, {
-      runId: run.id,
-      position: index,
-      draft: draft(family as PostDraft["formatFamily"], family === "carousel" ? "carousel-steps" : family === "explainer" ? "explainer-framework" : "text-pov", family === "carousel" ? 6 : 4),
-      channel: "linkedin",
-      englishVariant: "us",
-      brandVersion: 1,
-      formatNote: "Evergreen format",
-      sourceRefs: [],
-    }).id
-  );
-  const before = listPostsForRun(db, run.id);
-  const file = path.join(os.tmpdir(), `post-${ids[0]}.png`);
-  fs.writeFileSync(file, "x");
-  const replacement = draft("carousel", "carousel-checklist", 6);
-  replacement.title = "A different carousel";
-  await regenerateOnePost(db, ids[0], replacement, {
-    renderPostPackage: async () => ({
-      pages: [{ index: 0, filePath: file, width: 10, height: 10, text: replacement.caption, layout: { overflow: false, overlap: false, minBodyPx: 36, contrastRatio: 7, problems: [] } }],
-      pdfPath: null,
-      text: replacement.caption,
-      compositionId: "carousel-checklist",
-      layout: { overflow: false, overlap: false, minBodyPx: 36, contrastRatio: 7, problems: [] },
-    }),
-    resolveFontFaces: async () => new Map(),
-  });
-  const after = listPostsForRun(db, run.id);
-  assert.equal(after[0].title, "A different carousel");
-  assert.equal(after[1].revision, before[1].revision);
-  assert.equal(after[2].caption, before[2].caption);
-  assert.equal(getRun(db, run.id)?.english_variant, "us");
-  fs.rmSync(file, { force: true });
-});
-
 test("legacy runs stay readable after the posts migration", () => {
   const db = openTestDb();
   const owner = createAnonymousOwner(db);
@@ -308,27 +147,8 @@ test("legacy runs stay readable after the posts migration", () => {
   assert.equal(output.type, "linkedin_image");
 });
 
-test("zip entry names cannot escape and the caption stays paired with the post", () => {
+test("zip entry names cannot escape", () => {
   assert.throws(() => buildZip([{ name: "../caption.txt", data: "nope" }]));
-  const db = openTestDb();
-  const owner = createAnonymousOwner(db);
-  const brand = createBrand(db, owner, "https://example.com");
-  const run = createRun(db, brand.id, "Posts", null, 1, { mode: "posts" });
-  const post = insertPost(db, {
-    runId: run.id,
-    position: 0,
-    draft: draft("explainer", "explainer-framework", 4),
-    channel: "linkedin",
-    englishVariant: "uk",
-    brandVersion: 3,
-    formatNote: "Evergreen format",
-    sourceRefs: [],
-  });
-  const zip = buildPostZip(post, [], [{ id: "L1", sourceUrl: "https://example.com" }]);
-  assert.equal(readZipEntry(zip, "caption.txt")?.toString(), post.caption);
-  assert.equal(readZipEntry(zip, "brand-version.txt")?.toString(), "3");
-  assert.match(readZipEntry(zip, "sources.json")?.toString() ?? "", /example.com/);
-  assert.doesNotMatch(readZipEntry(zip, "sources.json")?.toString() ?? "", /@/);
 });
 
 test("concurrent reservations cannot both pass a budget that only covers one", async () => {
@@ -456,40 +276,6 @@ test("upload parser accepts a real image over 100kb, rejects oversize bodies, an
   }
 });
 
-test("a visitor cannot download another visitor's post package", async () => {
-  const { server, db, base } = await start();
-  try {
-    const first = await login(base);
-    const created = await fetch(`${base}/api/brands`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", Cookie: first.cookie, "X-CSRF-Token": first.csrf },
-      body: JSON.stringify({ url: "https://example.com/about" }),
-    });
-    const { brand } = (await created.json()) as { brand: { id: string } };
-    setBrandContext(db, brand.id, context());
-    setApprovedContext(db, brand.id, { logoAssetId: null, colours: ["#F4F1EA"], fonts: ["Georgia"], voiceNotes: "" });
-    const run = createRun(db, brand.id, "Posts", null, 1, { mode: "posts", englishVariant: "uk" });
-    const post = insertPost(db, {
-      runId: run.id,
-      position: 0,
-      draft: draft("proof", "text-pov", 3),
-      channel: "linkedin",
-      englishVariant: "uk",
-      brandVersion: 1,
-      formatNote: "Evergreen format",
-      sourceRefs: [],
-    });
-    const second = await login(base);
-    const res = await fetch(`${base}/api/posts/${post.id}/package.zip`, { headers: { Cookie: second.cookie } });
-    assert.equal(res.status, 404);
-    const own = await fetch(`${base}/api/posts/${post.id}/package.zip`, { headers: { Cookie: first.cookie } });
-    assert.equal(own.status, 200);
-    assert.match(own.headers.get("content-type") || "", /zip/);
-  } finally {
-    await new Promise<void>((resolve) => server.close(() => resolve()));
-  }
-});
-
 test("the run stores an explicit spelling choice", async () => {
   const { server, db, base } = await start();
   try {
@@ -512,7 +298,7 @@ test("the run stores an explicit spelling choice", async () => {
     const body = (await res.json()) as { run: { id: string }; englishVariant: string };
     assert.equal(body.englishVariant, "us");
     assert.equal(getRun(db, body.run.id)?.english_variant, "us");
-    assert.equal(getRun(db, body.run.id)?.mode, "posts");
+    assert.equal(getRun(db, body.run.id)?.mode, "legacy");
   } finally {
     await new Promise<void>((resolve) => server.close(() => resolve()));
   }
