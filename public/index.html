@@ -3,47 +3,65 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Goodspeed Brand OS</title>
+  <title>See where your brand is breaking, Goodspeed Brand OS</title>
+  <meta name="description" content="See where your brand is breaking. A free audit for SaaS and AI founders and marketing leads. No email and no sign-up.">
   <link rel="stylesheet" href="/styles.css">
 </head>
 <body>
   <a class="skip" href="#app">Skip to content</a>
   <header class="topbar">
     <span class="brand">Goodspeed Brand OS</span>
-    <span class="phase-tag">Free tool</span>
+    <span class="phase-tag">Free audit</span>
     <button id="logoutBtn" class="btn btn-ghost" type="button">Start over</button>
   </header>
 
   <main id="app" class="wrap">
     <ol id="steps" class="steps" aria-label="Progress">
-      <li data-step="url">URL</li>
-      <li data-step="read">Read</li>
+      <li data-step="site">Site</li>
       <li data-step="brand">Brand</li>
-      <li data-step="posts">Posts</li>
+      <li data-step="channels">Channels</li>
+      <li data-step="tools">Tools</li>
+      <li data-step="report">Report</li>
     </ol>
 
-    <section id="urlView">
-      <h1 tabindex="-1">Paste your URL. Get three posts worth publishing, in your brand.</h1>
-      <p>One website address. No account, no email, and no social connection.</p>
-      <form id="importForm" class="stack">
+    <section id="landingView">
+      <p class="eyebrow">For SaaS and AI founders, and for marketing leads</p>
+      <h1 tabindex="-1">See where your brand is breaking</h1>
+      <p class="lede">Paste your site. We read the public page, then you confirm the brand and add anything else you want checked.</p>
+
+      <article class="sample" aria-label="Bent Pixels example report">
+        <div class="sample-kicker">
+          <p class="eyebrow">Example only. Bent Pixels is the only sample brand.</p>
+          <span class="wordmark-chip"><img class="wordmark" src="/bent-pixels-wordmark.png" alt="Bent Pixels"></span>
+        </div>
+        <div id="sampleBody">
+          <p class="hint">Loading the example report.</p>
+        </div>
+        <p class="source-note">Example report, not a live audit. The breaks show the report layout. Company facts are from the public site, <a href="https://www.bentpixels.com/">bentpixels.com</a>.</p>
+      </article>
+
+      <form id="importForm" class="stack url-panel">
         <label for="siteUrl">Website address</label>
-        <input id="siteUrl" name="url" type="url" placeholder="https://example.com" required autocomplete="url">
-        <button type="submit" class="btn btn-primary">Make my posts</button>
+        <div class="url-row">
+          <input id="siteUrl" name="url" type="url" placeholder="https://example.com" required autocomplete="url">
+          <button type="submit" class="btn btn-primary">Run free brand audit</button>
+        </div>
+        <p class="hint">One public address. No email and no sign-up.</p>
         <p id="importError" class="error" role="alert" hidden></p>
       </form>
-      <div class="preview" aria-hidden="true">
-        <p class="eyebrow">What you get</p>
-        <ul>
-          <li>A carousel you can download as a PDF</li>
-          <li>A saveable checklist or framework image</li>
-          <li>A proof led post, or a text post if there is no picture you own</li>
-        </ul>
-      </div>
     </section>
 
     <section id="progressView" hidden>
-      <h1 tabindex="-1">Reading your site</h1>
-      <p id="progressText" role="status" aria-live="polite">Reading your website</p>
+      <div class="extract-panel">
+        <h1 id="progressHeading" tabindex="-1">Reading your site</h1>
+        <p id="progressText" role="status" aria-live="polite">Reading your website</p>
+        <p id="extractUrl" class="hint"></p>
+        <ol id="extractSteps" class="extract-steps">
+          <li data-step="reading_website" data-state="active">Reading your website</li>
+          <li data-step="finding_brand" data-state="waiting">Finding your brand</li>
+        </ol>
+        <p id="extractDetail" class="hint">Fetching the public page.</p>
+      </div>
       <div id="blockedBox" hidden>
         <p id="blockedText" class="error" role="alert"></p>
         <div class="row">
@@ -53,7 +71,7 @@
         <form id="manualForm" class="stack">
           <h2>Or tell us the basics</h2>
           <label for="manualName">Business name</label>
-          <input id="manualName" type="text" required>
+          <input id="manualName" type="text" required autocomplete="organization">
           <label for="manualOffer">What you offer</label>
           <textarea id="manualOffer" rows="3" required></textarea>
           <label for="manualAudience">Who it is for <span class="hint">optional</span></label>
@@ -66,113 +84,116 @@
 
     <section id="confirmView" hidden>
       <button id="backToUrl" class="btn btn-ghost" type="button">Back</button>
-      <h1 tabindex="-1">Does this look like you?</h1>
+      <h1 tabindex="-1">Does this look like your brand?</h1>
       <p>We filled this in from your site. Unknown means we did not find it. Change anything that is wrong, then continue.</p>
-      <article id="brandCard" class="brand-card"></article>
-      <details class="disclosure">
-        <summary>Spelling, channel, and your own images</summary>
+      <p id="confirmUrl" class="hint"></p>
+      <form id="brandForm" class="stack wide">
+        <label for="brandName">Business name</label>
+        <input id="brandName" type="text" required autocomplete="organization">
+        <div id="logoSlot"></div>
         <fieldset>
-          <legend>Spelling</legend>
-          <label><input type="radio" name="english" value="uk" checked> British English</label>
-          <label><input type="radio" name="english" value="us"> American English</label>
-          <p id="englishHint" class="hint"></p>
+          <legend>Colours</legend>
+          <div id="colourFields"></div>
+          <button id="addColour" class="btn btn-ghost" type="button">Add a colour</button>
         </fieldset>
         <fieldset>
-          <legend>Channel</legend>
-          <label><input type="radio" name="channel" value="linkedin" checked> LinkedIn</label>
-          <label><input type="radio" name="channel" value="x"> X</label>
+          <legend>Fonts</legend>
+          <div id="fontFields"></div>
+          <button id="addFont" class="btn btn-ghost" type="button">Add a font</button>
         </fieldset>
-        <div id="languageGate" hidden>
-          <p>This site does not look like English. We will not translate it unless you ask.</p>
-          <label><input id="confirmEnglish" type="checkbox"> Write the posts in English anyway</label>
-        </div>
-        <form id="ownedForm" class="stack">
-          <label for="ownedFile">Add an image you own <span class="hint">optional</span></label>
-          <input id="ownedFile" type="file" accept="image/png,image/jpeg,image/webp,image/gif">
-          <label><input id="ownConfirm" type="checkbox"> I own this image and you may use it in these posts</label>
-          <button type="submit" class="btn btn-ghost">Add image</button>
-          <p id="ownedStatus" class="hint" role="status"></p>
-        </form>
+        <h2>What the site says</h2>
+        <p id="siteSays"></p>
+        <details class="disclosure">
+          <summary>Readable copy from the page</summary>
+          <p id="excerpt"></p>
+        </details>
         <label for="voiceNotes">Voice <span class="hint">optional</span></label>
-        <textarea id="voiceNotes" rows="2" placeholder="Plain and specific. Short sentences."></textarea>
-        <label for="runTask">What the posts should cover <span class="hint">optional</span></label>
-        <input id="runTask" type="text" placeholder="Leave blank and we will choose useful topics from the site">
-      </details>
-      <div class="actions">
-        <button id="approveBtn" class="btn btn-primary" type="button">Looks right</button>
+        <textarea id="voiceNotes" rows="3" placeholder="How you should sound. Leave this blank if you are not sure."></textarea>
+        <button type="submit" class="btn btn-primary">Use this brand</button>
         <p id="approveError" class="error" role="alert" hidden></p>
+      </form>
+    </section>
+
+    <section id="channelsView" hidden>
+      <button id="backToBrand" class="btn btn-ghost" type="button">Back</button>
+      <h1 tabindex="-1">Add the other places the brand shows up</h1>
+      <p>All of this is optional. Anything you skip is marked as not checked.</p>
+      <form id="channelsForm" class="stack wide">
+        <label for="blogUrl">Blog address <span class="hint">optional</span></label>
+        <input id="blogUrl" type="url" placeholder="https://example.com/blog" autocomplete="url">
+        <p class="hint">A single blog or post URL. We will not crawl the whole site.</p>
+        <label for="linkedinText">LinkedIn post text <span class="hint">optional</span></label>
+        <textarea id="linkedinText" rows="6" placeholder="Paste two to five recent posts"></textarea>
+        <p class="hint">Paste the words from two to five recent posts. We cannot read LinkedIn pages automatically. Company pages and most post links refuse access unless someone is logged in, so a link on its own is not enough.</p>
+        <label for="deckFile">Deck <span class="hint">optional</span></label>
+        <input id="deckFile" type="file" accept="application/pdf,application/vnd.openxmlformats-officedocument.presentationml.presentation,.pdf,.pptx">
+        <p class="hint">PDF or PPTX, up to 6 MB. Add a file only if you want the deck checked.</p>
+        <p id="deckName" class="hint" role="status"></p>
+        <button type="submit" class="btn btn-primary">Continue</button>
+        <p id="channelsError" class="error" role="alert" hidden></p>
+      </form>
+    </section>
+
+    <section id="toolsView" hidden>
+      <button id="backToChannels" class="btn btn-ghost" type="button">Back</button>
+      <h1 tabindex="-1">Which tools and formats should this cover?</h1>
+      <p>Tell us what you use, or what you want this installed into. Pick at least one tool and one format.</p>
+      <div id="detectedBlock" hidden>
+        <p class="eyebrow">Noticed on the site</p>
+        <ul id="detectedChips" class="chips"></ul>
       </div>
+      <form id="toolsForm">
+        <fieldset>
+          <legend>Tools</legend>
+          <div id="toolChoices" class="choice-grid"></div>
+          <label id="toolOtherWrap" class="other-label" hidden>Other tool
+            <input id="toolOther" type="text" maxlength="80">
+          </label>
+        </fieldset>
+        <fieldset>
+          <legend>Formats</legend>
+          <div id="formatChoices" class="choice-grid"></div>
+          <label id="formatOtherWrap" class="other-label" hidden>Other format
+            <input id="formatOther" type="text" maxlength="80">
+          </label>
+        </fieldset>
+        <button id="runAudit" class="btn btn-primary" type="submit">Run the audit</button>
+        <p id="toolsError" class="error" role="alert" hidden></p>
+        <p id="rateNote" class="note" hidden>You have reached the free limit of 6 audits an hour. <a href="https://goodspeed.studio/contact">Talk to Goodspeed</a> if you want a person to take it from here.</p>
+      </form>
+    </section>
+
+    <section id="auditProgressView" hidden>
+      <h1 tabindex="-1">Checking your brand</h1>
+      <p id="auditProgressText" role="status" aria-live="polite">Checking your site</p>
+      <ol id="auditSteps" class="extract-steps">
+        <li data-step="site" data-state="active">Checking your site</li>
+        <li data-step="added" data-state="waiting">Checking what you added</li>
+        <li data-step="report" data-state="waiting">Writing your report</li>
+      </ol>
     </section>
 
     <section id="resultsView" hidden>
-      <button id="backToBrand" class="btn btn-ghost" type="button">Back</button>
-      <h1 tabindex="-1">Your posts</h1>
-      <p id="runStatusText" role="status" aria-live="polite"></p>
-      <div id="postGrid" class="post-grid"></div>
-      <div id="keepBar" class="row" hidden>
-        <button id="downloadAll" class="btn btn-primary" type="button">Download all</button>
+      <h1 id="resultsTitle" tabindex="-1">Where your brand is breaking</h1>
+      <p id="previewNote" class="note" hidden></p>
+      <div id="scoreBlock"></div>
+      <section id="breaksBlock"></section>
+      <section id="scorecardBlock"></section>
+      <section id="toolsBlock"></section>
+      <section id="skippedBlock"></section>
+      <div class="row">
+        <button id="downloadPdf" class="btn btn-primary" type="button">Download PDF</button>
         <a id="snapshotLink" class="btn btn-ghost" href="#">Download brand.md</a>
       </div>
-      <aside id="ladder" class="ladder" hidden>
-        <h2>If you want a person to take it further</h2>
-        <ol>
-          <li><strong>Free starter.</strong> A human made starter in 24 to 48 hours. Still free.</li>
-          <li><strong>Brand brain and templates.</strong> Built in the tools you already use. Price is confirmed with Goodspeed. It is not listed here.</li>
-          <li><strong>Upkeep.</strong> We keep the system current as the brand changes.</li>
-        </ol>
+      <p id="pdfStatus" class="hint" role="status"></p>
+      <aside class="next">
+        <h2>Next step</h2>
+        <p>A starter begins from the designs you already approved: brand and voice skills, guidelines, and Figma examples. No price is listed here.</p>
         <a class="btn btn-primary" href="https://goodspeed.studio/contact" target="_blank" rel="noopener">Talk to Goodspeed</a>
-        <form id="leadForm" class="stack">
-          <h3>Or leave a note</h3>
-          <p class="hint">Optional. Nothing is sent unless you tick consent.</p>
-          <label for="leadEmail">Email</label>
-          <input id="leadEmail" type="email" autocomplete="email">
-          <label for="leadTool">Preferred tool <span class="hint">optional</span></label>
-          <input id="leadTool" type="text">
-          <label for="leadNotes">Notes <span class="hint">optional</span></label>
-          <textarea id="leadNotes" rows="2"></textarea>
-          <label><input id="leadConsent" type="checkbox"> I am happy for Goodspeed to contact me about this.</label>
-          <button type="submit" class="btn btn-ghost">Send</button>
-          <p id="leadStatus" class="hint" role="status"></p>
-        </form>
       </aside>
     </section>
-
-    <section id="editorView" hidden>
-      <button id="closeEditor" class="btn btn-ghost" type="button">Back to posts</button>
-      <h1 id="editorTitle" tabindex="-1">Edit this post</h1>
-      <div class="editor-tabs">
-        <button type="button" id="tabEdit" class="btn btn-ghost" aria-pressed="true">Edit</button>
-        <button type="button" id="tabPreview" class="btn btn-ghost" aria-pressed="false">Preview</button>
-      </div>
-      <div class="editor editing">
-        <div id="editorPane" class="editor-pane">
-          <label for="hookSelect">Hook</label>
-          <select id="hookSelect"></select>
-          <label for="captionField">Caption</label>
-          <textarea id="captionField" rows="10"></textarea>
-          <label for="altField">Alt text</label>
-          <textarea id="altField" rows="3"></textarea>
-          <label for="instruction">Instruction <span class="hint">optional</span></label>
-          <input id="instruction" type="text" placeholder="Make this shorter">
-          <div class="row">
-            <button id="saveCopy" class="btn btn-primary" type="button">Edit copy</button>
-            <button id="shorterBtn" class="btn btn-ghost" type="button">Make this shorter</button>
-            <button id="regenBtn" class="btn btn-ghost" type="button">Regenerate this post</button>
-            <button id="undoBtn" class="btn btn-ghost" type="button">Undo</button>
-          </div>
-          <label for="layoutSelect">Change layout</label>
-          <select id="layoutSelect"></select>
-          <button id="applyLayout" class="btn btn-ghost" type="button">Apply layout</button>
-          <p id="editorError" class="error" role="alert" hidden></p>
-          <p id="editorStatus" class="hint" role="status"></p>
-        </div>
-        <div id="previewPane" class="preview-pane">
-          <div id="editorPreview"></div>
-          <p id="editorCaption" class="caption"></p>
-        </div>
-      </div>
-    </section>
   </main>
+  <script src="/audit-mock.js"></script>
   <script src="/app.js"></script>
 </body>
 </html>

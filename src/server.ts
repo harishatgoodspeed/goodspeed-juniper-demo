@@ -1039,7 +1039,7 @@ export function createApp() {
   // --- Own frontend (public/) ---
   const publicDir = path.join(__dirname, "..", "public");
   app.get("/", (req, res) => serveStaticFile(publicDir, "index.html", req, res));
-  app.get(/^\/(app\.js|styles\.css)$/, (req, res) =>
+  app.get(/^\/(app\.js|styles\.css|audit-mock\.js|bent-pixels-wordmark\.png)$/, (req, res) =>
     serveStaticFile(publicDir, req.path.slice(1), req, res)
   );
 
