@@ -5,11 +5,12 @@
  */
 
 import * as cheerio from "cheerio";
+import { chromium } from "playwright";
 import { safeFetch } from "../security/url";
 import type { AuditChannelKind, AuditEvidenceSide, DiscoveredChannel } from "./types";
 
 const MAX_CHANNELS = 6;
-const MAX_IMAGE_BYTES = 60_000;
+const MAX_IMAGE_BYTES = 400_000;
 
 const SHARE_HOSTS = /(?:share|sharer|intent|shareArticle|sharing)/i;
 
@@ -118,17 +119,74 @@ export function blockReason(kind: AuditChannelKind): string {
   return `${label} did not show a public page. Nothing from it was read.`;
 }
 
+export function bestLogoUrl(candidates: Array<{ url: string; kind: string }>): string | null {
+  const order = ["header_svg", "header_img", "og_image", "favicon"];
+  for (const kind of order) {
+    const found = candidates.find((candidate) => candidate.kind === kind);
+    if (found?.url) return found.url;
+  }
+  return candidates[0]?.url ?? null;
+}
+
 export async function embedImage(url: string | null): Promise<string | null> {
   if (!url || !/^https?:\/\//i.test(url)) return null;
   try {
-    const result = await safeFetch(url, { timeoutMs: 8000, maxBytes: MAX_IMAGE_BYTES });
-    if (result.statusCode >= 400) return null;
-    const type = String(result.headers["content-type"] || "").split(";")[0].trim().toLowerCase();
-    if (!["image/png", "image/jpeg", "image/gif", "image/webp", "image/svg+xml"].includes(type)) return null;
-    if (result.body.length === 0 || result.body.length > MAX_IMAGE_BYTES) return null;
-    return `data:${type};base64,${result.body.toString("base64")}`;
+    const result = await safeFetch(url, {
+      timeoutMs: 8000,
+      maxBytes: MAX_IMAGE_BYTES,
+      headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36", Accept: "image/*,*/*" },
+    });
+    if (result.statusCode >= 400 || result.body.length === 0) return null;
+    const headerType = String(result.headers["content-type"] || "").split(";")[0].trim().toLowerCase();
+    const sniffed = sniffImage(result.body, headerType);
+    if (!sniffed) return null;
+    const dataUrl = `data:${sniffed};base64,${result.body.toString("base64")}`;
+    if (sniffed === "image/svg+xml" || dataUrl.length > 80_000) return rasterize(dataUrl);
+    return dataUrl;
   } catch {
     return null;
+  }
+}
+
+function sniffImage(body: Buffer, headerType: string): string | null {
+  if (["image/png", "image/jpeg", "image/gif", "image/webp", "image/svg+xml"].includes(headerType)) return headerType;
+  const start = body.subarray(0, 80).toString("utf8").trim().toLowerCase();
+  if (start.startsWith("<svg") || start.includes("<svg")) return "image/svg+xml";
+  if (body[0] === 0x89 && body[1] === 0x50) return "image/png";
+  if (body[0] === 0xff && body[1] === 0xd8) return "image/jpeg";
+  return null;
+}
+
+async function rasterize(dataUrl: string): Promise<string | null> {
+  const browser = await chromium.launch();
+  try {
+    const page = await browser.newPage();
+    const png = await page.evaluate(async (src) => {
+      const img = new Image();
+      const loaded = await new Promise<boolean>((resolve) => {
+        img.onload = () => resolve(true);
+        img.onerror = () => resolve(false);
+        img.src = src;
+      });
+      if (!loaded || img.naturalWidth === 0) return null;
+      const max = 320;
+      const scale = Math.min(1, max / img.naturalWidth);
+      const canvas = document.createElement("canvas");
+      canvas.width = Math.max(1, Math.round(img.naturalWidth * scale));
+      canvas.height = Math.max(1, Math.round(img.naturalHeight * scale));
+      const ctx = canvas.getContext("2d");
+      if (!ctx) return null;
+      ctx.fillStyle = "#ffffff";
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+      return canvas.toDataURL("image/png");
+    }, dataUrl);
+    if (!png || png.length > 180_000) return null;
+    return png;
+  } catch {
+    return null;
+  } finally {
+    await browser.close();
   }
 }
 

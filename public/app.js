@@ -7,7 +7,8 @@
     channelsView: "channels", toolsView: "tools", auditView: "audit", resultsView: "audit",
   };
   var STATUS = { ok: "Sound", warn: "Weak", break: "Breaking" };
-  var SURFACE = { site: "Site", blog: "Blog", linkedin: "LinkedIn", deck: "Deck", x: "X", instagram: "Instagram", youtube: "YouTube" };
+  var SURFACE = { site: "Site", blog: "Blog", linkedin: "LinkedIn", deck: "Deck", x: "X", instagram: "Instagram", youtube: "YouTube", meta: "Meta ads" };
+  var shots = {};
 
   var brandId = null;
   var brandData = null;
@@ -162,7 +163,9 @@
 
   $("retryImport").addEventListener("click", function () { $("importForm").requestSubmit(); });
   $("correctUrl").addEventListener("click", function () { show("urlView"); $("siteUrl").focus(); });
-  $("noSite").addEventListener("click", function () { $("manualForm").hidden = false; $("manualName").focus(); });
+  $("showExample").addEventListener("click", function () {
+    $("sampleCard").hidden = !$("sampleCard").hidden;
+  });
   $("chipChange").addEventListener("click", function () { show("urlView"); });
   $("chipDetails").addEventListener("click", function () {
     $("chipDetail").hidden = !$("chipDetail").hidden;
@@ -337,6 +340,26 @@
       row.appendChild(keep);
       row.appendChild(drop);
       card.appendChild(row);
+      if (channel.kind === "linkedin" || channel.kind === "x" || channel.kind === "instagram") {
+        var file = el("input", { type: "file", accept: "image/png,image/jpeg,image/webp", "aria-label": "Screenshot of " + channel.kind });
+        file.addEventListener("change", function () {
+          var chosen = file.files && file.files[0];
+          if (!chosen) return;
+          var reader = new FileReader();
+          reader.onload = function () {
+            var dataUrl = String(reader.result || "");
+            shots[channel.kind] = {
+              kind: channel.kind,
+              mimeType: chosen.type || "image/png",
+              filename: chosen.name,
+              base64: dataUrl.slice(dataUrl.indexOf(",") + 1),
+            };
+          };
+          reader.readAsDataURL(chosen);
+        });
+        card.appendChild(el("p", { class: "quiet", text: shots[channel.kind] ? "Screenshot added. From your screenshot." : "Add a screenshot if the public page is blocked." }));
+        card.appendChild(file);
+      }
       grid.appendChild(card);
     });
   }
@@ -455,6 +478,8 @@
     if (blog) body.blogUrl = blog.url;
     var linkedin = $("linkedinText").value.trim();
     if (linkedin) body.linkedinText = linkedin;
+    var screenshots = Object.keys(shots).map(function (key) { return shots[key]; });
+    if (screenshots.length) body.screenshots = screenshots;
     show("auditView");
     setStep("site");
     var started = Date.now();

@@ -5,13 +5,13 @@ const CHECK_IDS = ["palette", "logo", "type", "voice", "message", "formats"] as 
 
 const score = z.number().int().min(0).max(100);
 
-const SURFACES = ["site", "blog", "linkedin", "deck", "x", "instagram", "youtube"] as const;
+const SURFACES = ["site", "blog", "linkedin", "deck", "x", "instagram", "youtube", "meta"] as const;
 
 const EvidenceSideSchema = z
   .object({
     caption: z.string().trim().min(1).max(80),
     text: z.string().trim().min(1).max(400).optional(),
-    imageUrl: z.string().trim().min(1).max(90_000).optional(),
+    imageUrl: z.string().trim().min(1).max(200_000).optional(),
     swatches: z.array(z.string().trim().min(4).max(20)).max(8).optional(),
   })
   .strict();
@@ -58,7 +58,7 @@ export const AuditResultSchema = z
       .object({
         name: z.string().trim().min(1).max(160),
         siteUrl: z.string().trim().min(1).max(500),
-        logoUrl: z.string().max(60_000).optional(),
+        logoUrl: z.string().max(200_000).optional(),
         palette: z.array(z.string().max(40)).max(12),
         fonts: z.array(z.string().trim().min(1).max(80)).max(8),
         voiceSummary: z.string().max(500),

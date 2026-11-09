@@ -12,9 +12,16 @@ export type AuditCheckId = "palette" | "logo" | "type" | "voice" | "message" | "
 
 export type AuditStatus = "ok" | "warn" | "break";
 
-export type AuditSurface = "site" | "blog" | "linkedin" | "deck" | "x" | "instagram" | "youtube";
+export type AuditSurface = "site" | "blog" | "linkedin" | "deck" | "x" | "instagram" | "youtube" | "meta";
 
 export type AuditChannelKind = "linkedin" | "x" | "instagram" | "youtube" | "blog";
+
+export interface AuditScreenshot {
+  kind: "linkedin" | "x" | "instagram";
+  mimeType: string;
+  base64: string;
+  filename?: string;
+}
 
 export interface AuditChannelRef {
   kind: AuditChannelKind;
@@ -102,6 +109,8 @@ export interface AuditRequest {
   linkedinText?: string;
   /** Public channel pages the visitor kept. */
   channels?: AuditChannelRef[];
+  /** Screenshots for channels whose public page could not be read. */
+  screenshots?: AuditScreenshot[];
   deckFile?: AuditDeckFile;
   tools: string[];
   formats: string[];

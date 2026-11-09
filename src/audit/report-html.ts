@@ -72,6 +72,7 @@ const SURFACE_LABEL: Record<string, string> = {
   instagram: "Instagram",
   x: "X",
   youtube: "YouTube",
+  meta: "Meta ads",
 };
 
 export function formatAuditDate(generatedAt: string): string | null {
@@ -107,8 +108,8 @@ function surfaceLabel(surface: string): string {
 export function safeLogoSrc(logoUrl: string | undefined): string | null {
   if (!logoUrl) return null;
   const compact = logoUrl.replace(/\s/g, "");
-  if (compact.length > 60_000) return null;
-  if (/^data:image\/(png|jpeg|gif|webp);base64,[A-Za-z0-9+/=]+$/.test(compact)) return compact;
+  if (compact.length > 200_000) return null;
+  if (/^data:image\/(png|jpeg|gif|webp|svg\+xml);base64,[A-Za-z0-9+/=]+$/.test(compact)) return compact;
   return null;
 }
 

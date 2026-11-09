@@ -15,10 +15,13 @@ test("the public page calls the real audit routes and has no preview mock", () =
   assert.match(html, /What's your website/);
   assert.match(html, /Read my site/);
   assert.match(html, /Are these your channels/);
+  assert.match(html, /See an example report/);
+  assert.doesNotMatch(html, /No website\? Start without one/);
   assert.match(html, /Your brand/);
   assert.match(html, /https:\/\/goodspeed\.studio\/contact/);
   assert.match(html, /Bent Pixels is the only sample brand/);
-  assert.match(html, /If it asks for a login, nothing on that page is read/);
+  assert.match(html, /marked Couldn't read/);
+  assert.match(html, /only covers ads shown in the EU/);
   assert.match(html, /No email and no sign-up/);
   assert.match(html, /6 audits an hour/);
   assert.match(html, /Download PDF/);

@@ -329,12 +329,15 @@ Several real bugs were found and fixed along the way, not by `npm test`:
   exposure.
 - **Named CSS colours aren't counted** (e.g. `tomato`) — only hex and
   `rgb()`/`rgba()`.
+- **Meta Ad Library** is optional. Set `META_AD_LIBRARY_TOKEN` to query
+  `graph.facebook.com` `ads_archive`. Without that token the channel is
+  marked Not assessed. The library only covers ads shown in the EU.
 
 ## Environment variables
 
 See `.env.example` for the full list with descriptions. All of `PORT`,
 `NODE_ENV`, `APP_BASE_URL`, `DATABASE_PATH`, `ASSET_DIR`, `SESSION_SECRET`,
-`ANTHROPIC_API_KEY`, `ANTHROPIC_MODEL`, `MAX_CONCURRENT_JOBS`,
+`ANTHROPIC_API_KEY`, `ANTHROPIC_MODEL`, `META_AD_LIBRARY_TOKEN`, `MAX_CONCURRENT_JOBS`,
 `DAILY_RUN_LIMIT`, `MAX_RUN_TOKENS`, `COLOUR_DELTA_E_THRESHOLD`,
 `LOGO_SIMILARITY_THRESHOLD`, `UPLOAD_COLOUR_MATCH_THRESHOLD`,
 `RETENTION_DAYS`, `PER_VISITOR_DAILY_SPEND_USD`, `GLOBAL_DAILY_SPEND_USD`,

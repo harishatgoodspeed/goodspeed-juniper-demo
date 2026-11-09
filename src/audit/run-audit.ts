@@ -25,6 +25,7 @@ import {
   type DeckFormatSignal,
 } from "./checks";
 import { compareChannels } from "./channel-compare";
+import { bestLogoUrl } from "./channels";
 import { detectTools } from "./detect-tools";
 import { parseDeck } from "./deck";
 import type { AuditCheck, AuditFinding, AuditRequest, AuditResult, AuditSurface } from "./types";
@@ -140,7 +141,9 @@ export async function runAudit(body: unknown, deps: AuditDeps = {}): Promise<Aud
   const channelNotes = await compareChannels(
     request.channels || [],
     siteContext,
-    siteContext.colours.map((colour) => colour.hex)
+    siteContext.colours.map((colour) => colour.hex),
+    request.screenshots || [],
+    site.html
   );
   skipped.push(...channelNotes.skipped);
 
@@ -178,8 +181,7 @@ export async function runAudit(body: unknown, deps: AuditDeps = {}): Promise<Aud
   checks[1] = withChannelFindings(checks[1], channelNotes.logoFindings, channelNotes.logoCap);
   checks[4] = withChannelFindings(checks[4], channelNotes.messageFindings, channelNotes.messageCap);
 
-  const logo = siteContext.logoCandidates.find((candidate) => candidate.kind === "header_img") ??
-    siteContext.logoCandidates.find((candidate) => candidate.kind === "favicon" || candidate.kind === "og_image");
+  const logo = bestLogoUrl(siteContext.logoCandidates);
 
   const palette = chromaticHexes(
     siteContext.colours.map((colour) => colour.hex),
@@ -191,7 +193,7 @@ export async function runAudit(body: unknown, deps: AuditDeps = {}): Promise<Aud
     brand: {
       name: brandName(siteContext, request.siteUrl),
       siteUrl: request.siteUrl,
-      ...(logo ? { logoUrl: logo.url } : {}),
+      ...(channelNotes.siteLogoData ? { logoUrl: channelNotes.siteLogoData } : logo ? { logoUrl: logo } : {}),
       palette: palette.length > 0 ? palette : fallbackPalette,
       fonts: siteFonts.slice(0, 8),
       voiceSummary: summariseVoice(siteCopy),
@@ -263,6 +265,30 @@ function parseChannels(value: unknown): AuditRequest["channels"] {
     channels.push({ kind: kind as NonNullable<AuditRequest["channels"]>[number]["kind"], url });
   }
   return channels.length ? channels : undefined;
+}
+
+function parseScreenshots(value: unknown): AuditRequest["screenshots"] {
+  if (!Array.isArray(value)) return undefined;
+  const kinds = new Set(["linkedin", "x", "instagram"]);
+  const shots: NonNullable<AuditRequest["screenshots"]> = [];
+  for (const item of value.slice(0, 3)) {
+    if (!item || typeof item !== "object") continue;
+    const record = item as Record<string, unknown>;
+    const kind = typeof record.kind === "string" ? record.kind : "";
+    const mimeType = typeof record.mimeType === "string" ? record.mimeType.trim() : "";
+    const base64 = typeof record.base64 === "string" ? record.base64.trim() : "";
+    if (!kinds.has(kind) || !/^image\/(png|jpeg|webp|gif)$/.test(mimeType) || !base64) continue;
+    if (base64.length > 6_000_000) {
+      throw new AuditRequestError(400, "invalid_body", "That screenshot is too large. Use an image under 4 MB.");
+    }
+    shots.push({
+      kind: kind as "linkedin" | "x" | "instagram",
+      mimeType,
+      base64,
+      ...(typeof record.filename === "string" ? { filename: record.filename.slice(0, 120) } : {}),
+    });
+  }
+  return shots.length ? shots : undefined;
 }
 
 function isBareUrl(value: string): boolean {
@@ -348,12 +374,14 @@ export function parseAuditBody(body: unknown): AuditRequest {
   }
 
   const channels = parseChannels(record.channels);
+  const screenshots = parseScreenshots(record.screenshots);
 
   return {
     siteUrl,
     ...(blogUrl ? { blogUrl } : {}),
     ...(linkedinText ? { linkedinText } : {}),
     ...(channels ? { channels } : {}),
+    ...(screenshots ? { screenshots } : {}),
     ...(deckFile ? { deckFile } : {}),
     tools,
     formats,

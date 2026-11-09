@@ -33,11 +33,6 @@
 
   <main id="app">
     <section id="urlView" class="screen">
-      <article id="sampleCard" class="sample" aria-label="Bent Pixels example report">
-        <p class="eyebrow">Example only. Bent Pixels is the only sample brand.</p>
-        <div id="sampleBody"><p class="quiet">Loading the example report.</p></div>
-        <p class="quiet">Example report, not a live audit. Company facts are from <a href="https://www.bentpixels.com/">bentpixels.com</a>.</p>
-      </article>
       <form id="importForm" class="question">
         <p class="mark-dot" aria-hidden="true">G</p>
         <h1 tabindex="-1">What's your website?</h1>
@@ -47,9 +42,14 @@
           <input id="siteUrl" name="url" type="url" placeholder="https://goodspeed.studio" required autocomplete="url">
           <button class="pill dark" type="submit">Read my site <kbd>Enter</kbd></button>
         </div>
-        <button id="noSite" class="pill light" type="button">No website? Start without one</button>
         <p id="importError" class="error" role="alert" hidden></p>
+        <button id="showExample" class="text-btn" type="button">See an example report</button>
       </form>
+      <article id="sampleCard" class="sample" hidden aria-label="Bent Pixels example report">
+        <p class="eyebrow">Example only. Bent Pixels is the only sample brand.</p>
+        <div id="sampleBody"><p class="quiet">Loading the example report.</p></div>
+        <p class="quiet">Example report, not a live audit. Company facts are from <a href="https://www.bentpixels.com/">bentpixels.com</a>.</p>
+      </article>
       <form id="manualForm" class="question" hidden>
         <h1 tabindex="-1">Tell us the brand</h1>
         <p class="sub">A name and what you offer. We will not invent the rest.</p>
@@ -116,7 +116,7 @@
         <div id="channelGrid" class="card-grid"></div>
         <label for="linkedinText">LinkedIn text, only if the public page is blocked</label>
         <textarea id="linkedinText" rows="4" placeholder="Paste the about line or a few posts"></textarea>
-        <p class="quiet">We try the public LinkedIn page without logging in. If it asks for a login, nothing on that page is read, and this paste is the fallback for LinkedIn only.</p>
+        <p class="quiet">We open the public LinkedIn page once, as a logged-out guest, and read only the title, logo, tagline, and about text if they are there. If that comes back as a login wall, the channel is marked Couldn't read. Paste the text, or add a screenshot of LinkedIn, X, or Instagram. Meta Ad Library only covers ads shown in the EU.</p>
         <div class="row">
           <button id="backToProfile" class="text-btn" type="button">Back</button>
           <button id="keepChannels" class="pill dark" type="button">Continue</button>
