@@ -42,6 +42,7 @@ import { createShare, getShare, listActiveSharesForBrand, revokeShare } from "./
 import { canAccessBrand, isOwner } from "./security/brand-access";
 import { renderSharePage } from "./share-page";
 import { buildBrandMarkdown } from "./snapshot";
+import { registerAuditPdfRoutes } from "./audit/pdf-route";
 import { checkUploadAgainstBrand, UploadDecodeError } from "./review/upload-check";
 import { createLead } from "./leads";
 import { notifySlack } from "./slack";
@@ -1035,6 +1036,9 @@ export function createApp() {
     res.set("Content-Type", asset.mime_type ?? "application/octet-stream");
     fs.createReadStream(asset.file_path).pipe(res);
   });
+
+  // Audit PDF only. Scoring and the page flow are separate.
+  registerAuditPdfRoutes(app, db);
 
   // --- Own frontend (public/) ---
   const publicDir = path.join(__dirname, "..", "public");
