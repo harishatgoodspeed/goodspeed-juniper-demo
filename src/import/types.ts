@@ -1,3 +1,5 @@
+import type { DiscoveredChannel } from "../audit/types";
+
 export interface LogoCandidate {
   url: string;
   kind: "favicon" | "og_image" | "header_img" | "header_svg";
@@ -38,6 +40,8 @@ export interface BrandContext {
   fonts: FontCandidate[];
   googleFontsLinks: string[];
   images: ContentImage[];
+  /** Public channel links found on the page. Absent on older extracts. */
+  channels?: DiscoveredChannel[];
   /** Bounded, truncated readable copy for later LLM summarisation. Not the full page. */
   textExcerpt: string;
   textTruncated: boolean;

@@ -5,11 +5,30 @@ const CHECK_IDS = ["palette", "logo", "type", "voice", "message", "formats"] as 
 
 const score = z.number().int().min(0).max(100);
 
+const SURFACES = ["site", "blog", "linkedin", "deck", "x", "instagram", "youtube"] as const;
+
+const EvidenceSideSchema = z
+  .object({
+    caption: z.string().trim().min(1).max(80),
+    text: z.string().trim().min(1).max(400).optional(),
+    imageUrl: z.string().trim().min(1).max(90_000).optional(),
+    swatches: z.array(z.string().trim().min(4).max(20)).max(8).optional(),
+  })
+  .strict();
+
 const FindingSchema = z
   .object({
-    surface: z.enum(["site", "blog", "linkedin", "deck"]),
+    surface: z.enum(SURFACES),
     detail: z.string().trim().min(1).max(2000),
     evidenceUrl: z.string().trim().min(1).max(2000).optional(),
+    whyItMatters: z.string().trim().min(1).max(400).optional(),
+    comparison: z
+      .object({
+        site: EvidenceSideSchema,
+        other: EvidenceSideSchema,
+      })
+      .strict()
+      .optional(),
   })
   .strict();
 
@@ -19,7 +38,7 @@ const CheckSchema = z
     label: z.string().trim().min(1).max(80),
     score,
     status: z.enum(["ok", "warn", "break"]),
-    findings: z.array(FindingSchema).max(8),
+    findings: z.array(FindingSchema).max(16),
   })
   .strict();
 
@@ -27,7 +46,7 @@ const BreakSchema = z
   .object({
     rank: z.number().int().min(1).max(5),
     title: z.string().trim().min(1).max(140),
-    surface: z.enum(["site", "blog", "linkedin", "deck"]),
+    surface: z.enum(SURFACES),
     whyItMatters: z.string().trim().min(1).max(500),
     cost: z.string().trim().min(1).max(300),
   })
@@ -64,7 +83,7 @@ export const AuditResultSchema = z
           })
           .strict()
       )
-      .max(8),
+      .max(12),
     generatedAt: z.string().trim().min(1).max(40),
   })
   .strict()

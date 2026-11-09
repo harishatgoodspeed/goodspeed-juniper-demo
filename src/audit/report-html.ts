@@ -1,4 +1,4 @@
-import type { AuditCheck, AuditCheckId, AuditResult, AuditStatus } from "./types";
+import type { AuditCheck, AuditCheckId, AuditEvidenceSide, AuditFinding, AuditResult, AuditStatus } from "./types";
 
 /** A4 at 96 CSS pixels per inch. Same page box as the one pager renderer. */
 export const AUDIT_PAGE = { width: 794, height: 1123 };
@@ -71,6 +71,7 @@ const SURFACE_LABEL: Record<string, string> = {
   deck: "Deck",
   instagram: "Instagram",
   x: "X",
+  youtube: "YouTube",
 };
 
 export function formatAuditDate(generatedAt: string): string | null {
@@ -297,10 +298,50 @@ function findingList(check: AuditCheck): string {
   if (check.findings.length === 0) return `<p class="quiet">${REPORT_COPY.noFindings}</p>`;
   return `<ul class="findings">${check.findings
     .map((finding) => {
-      const source = finding.evidenceUrl ? `<span class="evidence">${escapeHtml(finding.evidenceUrl)}</span>` : "";
-      return `<li><span class="surf">${escapeHtml(surfaceLabel(finding.surface))}</span><span class="detail">${escapeHtml(finding.detail)}</span>${source}</li>`;
+      const source = finding.evidenceUrl
+        ? `<a class="evidence" href="${escapeHtml(finding.evidenceUrl)}">${escapeHtml(finding.evidenceUrl)}</a>`
+        : "";
+      const why = finding.whyItMatters ? `<p class="why">${escapeHtml(finding.whyItMatters)}</p>` : "";
+      return `<li><span class="surf">${escapeHtml(surfaceLabel(finding.surface))}</span><span class="detail">${escapeHtml(finding.detail)}</span>${why}${source}</li>`;
     })
     .join("")}</ul>`;
+}
+
+function comparisonBlock(comparison: AuditFinding["comparison"]): string {
+  if (!comparison) return "";
+  return `<div class="compare">${sideHtml(comparison.site)}${sideHtml(comparison.other)}</div>`;
+}
+
+function sideHtml(side: AuditEvidenceSide): string {
+  const img = side.imageUrl && side.imageUrl.startsWith("data:") ? `<img src="${side.imageUrl}" alt="">` : "";
+  const swatches = (side.swatches || [])
+    .map((hex) => `<span class="swatch" style="background:${escapeHtml(hex)}"></span>`)
+    .join("");
+  const text = side.text ? `<p>${escapeHtml(side.text)}</p>` : "";
+  return `<figure><figcaption>${escapeHtml(side.caption)}</figcaption>${img}${swatches ? `<div class="swatch-row">${swatches}</div>` : ""}${text}</figure>`;
+}
+
+function evidencePage(result: AuditResult, dateLabel: string): string {
+  const pairs = result.checks.flatMap((check) => check.findings.filter((finding) => finding.comparison));
+  if (pairs.length === 0) return "";
+  const blocks = pairs
+    .map((finding) => {
+      const link = finding.evidenceUrl
+        ? `<a class="evidence" href="${escapeHtml(finding.evidenceUrl)}">${escapeHtml(finding.evidenceUrl)}</a>`
+        : "";
+      const why = finding.whyItMatters ? `<p class="why">${escapeHtml(finding.whyItMatters)}</p>` : "";
+      return `<section class="pair"><p><span class="surf">${escapeHtml(surfaceLabel(finding.surface))}</span> ${escapeHtml(finding.detail)}</p>${why}${comparisonBlock(finding.comparison)}${link}</section>`;
+    })
+    .join("");
+  return `<article class="sheet">
+    ${pageBar(result.brand.name)}
+    <div class="body">
+      <h2>Side by side</h2>
+      <p class="lede">Each pair is something the audit actually read. A missing picture means that file could not be embedded.</p>
+      ${blocks}
+    </div>
+    ${runningFooter(dateLabel)}
+  </article>`;
 }
 
 function gapsPage(result: AuditResult, dateLabel: string): string {
@@ -571,6 +612,15 @@ export function buildAuditReportHtml(result: AuditResult): string {
   .findings li, .skips li { display: grid; grid-template-columns: 92px 1fr; gap: 8px; padding: 2px 0; font-size: 12px; line-height: 1.35; }
   .surf { color: #5c5a55; font-weight: 600; }
   .evidence { grid-column: 2; color: #5c5a55; overflow-wrap: anywhere; font-size: 11px; }
+  .why, .compare { grid-column: 1 / -1; }
+  .why { margin: 2px 0 0; color: #3d4a40; }
+  .compare { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 6px; }
+  .compare figure { margin: 0; background: #fff; border: 1px solid #e3e0d8; border-radius: 8px; padding: 8px; }
+  .compare figcaption { font-size: 10px; letter-spacing: 0.06em; text-transform: uppercase; color: #5c685e; margin-bottom: 4px; }
+  .compare img { max-width: 100%; max-height: 56px; object-fit: contain; }
+  .compare p { margin: 4px 0 0; font-size: 12px; }
+  .swatch-row { display: flex; gap: 4px; flex-wrap: wrap; }
+  .swatch { width: 16px; height: 16px; border-radius: 4px; border: 1px solid rgba(0,0,0,0.15); }
 
   .gaps { justify-content: flex-start; }
   .gaps section + section { margin-top: 48px; }
@@ -615,6 +665,7 @@ export function buildAuditReportHtml(result: AuditResult): string {
 <body>
 ${cover(result, dateLabel)}
 ${breaksPage(result, dateLabel)}
+${evidencePage(result, dateLabel)}
 ${scorecardPage(result, dateLabel)}
 ${gapsPage(result, dateLabel)}
 ${closePage(result, dateLabel)}

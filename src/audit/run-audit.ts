@@ -11,6 +11,7 @@ import { SsrfError, validateUrlSyntax } from "../security/url";
 import {
   chromaticHexes,
   googleFontFamilies,
+  makeCheck,
   overallFromChecks,
   rankBreaks,
   scoreFormats,
@@ -23,9 +24,10 @@ import {
   uniqueFontNames,
   type DeckFormatSignal,
 } from "./checks";
+import { compareChannels } from "./channel-compare";
 import { detectTools } from "./detect-tools";
 import { parseDeck } from "./deck";
-import type { AuditCheck, AuditRequest, AuditResult, AuditSurface } from "./types";
+import type { AuditCheck, AuditFinding, AuditRequest, AuditResult, AuditSurface } from "./types";
 
 const MAX_LIST = 20;
 const MAX_ITEM = 80;
@@ -91,10 +93,11 @@ export async function runAudit(body: unknown, deps: AuditDeps = {}): Promise<Aud
 
   let linkedinText: string | null = null;
   const pasted = request.linkedinText?.trim() ?? "";
-  if (!pasted) {
+  const keptLinkedIn = (request.channels || []).some((channel) => channel.kind === "linkedin");
+  if (!pasted && !keptLinkedIn) {
     skipped.push({
       surface: "linkedin",
-      reason: "No LinkedIn text was pasted. LinkedIn pages are not fetched.",
+      reason: "No LinkedIn page was kept, and no post text was pasted.",
     });
   } else if (isBareUrl(pasted)) {
     skipped.push({
@@ -134,10 +137,23 @@ export async function runAudit(body: unknown, deps: AuditDeps = {}): Promise<Aud
   const siteCopy = [siteContext.description, siteContext.textExcerpt].filter(Boolean).join(" ");
   const blogCopy = blogContext ? [blogContext.description, blogContext.textExcerpt].filter(Boolean).join(" ") : "";
 
+  const channelNotes = await compareChannels(
+    request.channels || [],
+    siteContext,
+    siteContext.colours.map((colour) => colour.hex)
+  );
+  skipped.push(...channelNotes.skipped);
+
   const voiceParts: Array<{ surface: AuditSurface; text: string }> = [{ surface: "site", text: siteCopy }];
   if (blogCopy) voiceParts.push({ surface: "blog", text: blogCopy });
   if (linkedinText) voiceParts.push({ surface: "linkedin", text: linkedinText });
   if (deckText) voiceParts.push({ surface: "deck", text: deckText });
+  for (const part of channelNotes.voiceTexts) {
+    if (part.surface === "blog" && blogCopy) continue;
+    if (!voiceParts.some((existing) => existing.surface === part.surface && existing.text === part.text)) {
+      voiceParts.push(part);
+    }
+  }
 
   const messageParts = voiceParts.filter((part) => part.surface !== "site");
 
@@ -158,6 +174,9 @@ export async function runAudit(body: unknown, deps: AuditDeps = {}): Promise<Aud
     scoreMessage(siteCopy, messageParts),
     scoreFormats(deckSignal),
   ];
+  checks[0] = withChannelFindings(checks[0], channelNotes.paletteFindings, channelNotes.paletteCap);
+  checks[1] = withChannelFindings(checks[1], channelNotes.logoFindings, channelNotes.logoCap);
+  checks[4] = withChannelFindings(checks[4], channelNotes.messageFindings, channelNotes.messageCap);
 
   const logo = siteContext.logoCandidates.find((candidate) => candidate.kind === "header_img") ??
     siteContext.logoCandidates.find((candidate) => candidate.kind === "favicon" || candidate.kind === "og_image");
@@ -218,6 +237,32 @@ function dedupe(values: string[]): string[] {
     out.push(value);
   }
   return out;
+}
+
+function withChannelFindings(check: AuditCheck, findings: AuditFinding[], cap: number | null): AuditCheck {
+  if (findings.length === 0 && cap == null) return check;
+  const score = cap == null ? check.score : Math.min(check.score, cap);
+  return makeCheck(check.id, score, [...check.findings, ...findings].slice(0, 12));
+}
+
+function parseChannels(value: unknown): AuditRequest["channels"] {
+  if (!Array.isArray(value)) return undefined;
+  const kinds = new Set(["linkedin", "x", "instagram", "youtube", "blog"]);
+  const channels: NonNullable<AuditRequest["channels"]> = [];
+  for (const item of value.slice(0, 6)) {
+    if (!item || typeof item !== "object") continue;
+    const record = item as Record<string, unknown>;
+    const kind = typeof record.kind === "string" ? record.kind : "";
+    const url = typeof record.url === "string" ? record.url.trim() : "";
+    if (!kinds.has(kind) || !url) continue;
+    try {
+      validateUrlSyntax(url);
+    } catch (err) {
+      throw new AuditRequestError(400, "invalid_url", err instanceof Error ? err.message : "Invalid channel URL");
+    }
+    channels.push({ kind: kind as NonNullable<AuditRequest["channels"]>[number]["kind"], url });
+  }
+  return channels.length ? channels : undefined;
 }
 
 function isBareUrl(value: string): boolean {
@@ -302,10 +347,13 @@ export function parseAuditBody(body: unknown): AuditRequest {
     deckFile = { mimeType, base64, ...(filename ? { filename } : {}) };
   }
 
+  const channels = parseChannels(record.channels);
+
   return {
     siteUrl,
     ...(blogUrl ? { blogUrl } : {}),
     ...(linkedinText ? { linkedinText } : {}),
+    ...(channels ? { channels } : {}),
     ...(deckFile ? { deckFile } : {}),
     tools,
     formats,

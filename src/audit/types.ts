@@ -4,19 +4,48 @@
  * GET /api/audit/sample returns the Bent Pixels sample AuditResult.
  *
  * deckFile is a base64 JSON upload: { filename?, mimeType, base64 }.
- * LinkedIn is pasted text only. This API does not fetch LinkedIn pages.
+ * channels are public pages discovered on the site and kept by the visitor.
+ * LinkedIn is fetched as a public company page. A login wall is not treated as content.
  */
 
 export type AuditCheckId = "palette" | "logo" | "type" | "voice" | "message" | "formats";
 
 export type AuditStatus = "ok" | "warn" | "break";
 
-export type AuditSurface = "site" | "blog" | "linkedin" | "deck";
+export type AuditSurface = "site" | "blog" | "linkedin" | "deck" | "x" | "instagram" | "youtube";
+
+export type AuditChannelKind = "linkedin" | "x" | "instagram" | "youtube" | "blog";
+
+export interface AuditChannelRef {
+  kind: AuditChannelKind;
+  url: string;
+}
+
+/** A public channel link read from the site. name is the handle or host, not a guess. */
+export interface DiscoveredChannel {
+  kind: AuditChannelKind;
+  url: string;
+  name: string;
+}
+
+/** One side of a side by side comparison. Only fields that were actually read. */
+export interface AuditEvidenceSide {
+  caption: string;
+  text?: string;
+  /** A normal URL, or a data URL when the image was already fetched. */
+  imageUrl?: string;
+  swatches?: string[];
+}
 
 export interface AuditFinding {
   surface: AuditSurface;
   detail: string;
   evidenceUrl?: string;
+  whyItMatters?: string;
+  comparison?: {
+    site: AuditEvidenceSide;
+    other: AuditEvidenceSide;
+  };
 }
 
 export interface AuditCheck {
@@ -71,6 +100,8 @@ export interface AuditRequest {
   siteUrl: string;
   blogUrl?: string;
   linkedinText?: string;
+  /** Public channel pages the visitor kept. */
+  channels?: AuditChannelRef[];
   deckFile?: AuditDeckFile;
   tools: string[];
   formats: string[];

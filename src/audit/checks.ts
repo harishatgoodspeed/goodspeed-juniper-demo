@@ -318,6 +318,7 @@ export function uniqueFontNames(names: string[]): string[] {
     const cleaned = name.replace(/\s+/g, " ").trim();
     if (!cleaned) continue;
     if (cleaned.startsWith("+") || cleaned.startsWith("var(")) continue;
+    if (/placeholder$/i.test(cleaned)) continue;
     const key = cleaned.toLowerCase();
     if (seen.has(key)) continue;
     if (GENERIC_FONTS.has(key)) continue;

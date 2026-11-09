@@ -3,6 +3,7 @@ import type { JobRow } from "../jobs";
 import { setJobProgress } from "../jobs";
 import { getBrand, setBrandContext, setBrandStatus, addSourceAsset } from "../brands";
 import { fetchBrandSource } from "./fetch";
+import { discoverChannels } from "../audit/channels";
 import { extractBrandContext } from "./extract";
 import { downloadAndValidateAsset, saveAssetFile, saveTextFile } from "./assets";
 import { newId } from "../ids";
@@ -40,6 +41,7 @@ async function runImport(
     stylesheets: source.stylesheets,
     stylesheetsSkipped: source.stylesheetsSkipped,
   });
+  context.channels = discoverChannels(source.html, brand.source_url);
 
   // Provenance: keep the raw fetched HTML and stylesheets on disk, recorded
   // as source_assets. Never exposed on the public share page — see server.ts.
