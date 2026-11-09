@@ -537,7 +537,7 @@ export function scoreVoice(parts: Array<{ surface: AuditSurface; text: string }>
   return makeCheck("voice", score, findings);
 }
 
-export function offerTokens(text: string): string[] {
+export function offerTokens(text: string, limit = 12): string[] {
   const counts = new Map<string, number>();
   const words = text.toLowerCase().replace(/[^a-z0-9\s]/g, " ").split(/\s+/);
   for (const word of words) {
@@ -548,7 +548,7 @@ export function offerTokens(text: string): string[] {
   }
   return Array.from(counts.entries())
     .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
-    .slice(0, 12)
+    .slice(0, limit)
     .map(([token]) => token);
 }
 

@@ -7,6 +7,7 @@
 import * as cheerio from "cheerio";
 import { chromium } from "playwright";
 import { safeFetch } from "../security/url";
+import { cleanChannelText, decodeHtml } from "./positioning";
 import type { AuditChannelKind, AuditEvidenceSide, DiscoveredChannel } from "./types";
 
 const MAX_CHANNELS = 6;
@@ -94,9 +95,9 @@ export function readPublicChannel(html: string, fetchedUrl: string, kind: AuditC
     fetchedUrl,
     blocked,
     reason: blocked ? blockReason(kind) : null,
-    name: blocked ? null : ogTitle || title || null,
-    tagline: blocked ? null : description || null,
-    textExcerpt: blocked ? "" : text.slice(0, 600),
+    name: blocked ? null : cleanChannelText(ogTitle || title || "").text || null,
+    tagline: blocked ? null : cleanChannelText(description || "").text || null,
+    textExcerpt: blocked ? "" : decodeHtml(text).slice(0, 600),
     colours: [],
     imageUrl: blocked ? null : imageUrl,
     imageDataUrl: null,
@@ -120,12 +121,93 @@ export function blockReason(kind: AuditChannelKind): string {
 }
 
 export function bestLogoUrl(candidates: Array<{ url: string; kind: string }>): string | null {
-  const order = ["header_svg", "header_img", "og_image", "favicon"];
+  const order = ["header_img", "apple_touch", "og_image", "favicon"];
   for (const kind of order) {
-    const found = candidates.find((candidate) => candidate.kind === kind);
+    const found = candidates.find((candidate) => candidate.kind === kind && looksLikeImageUrl(candidate.url));
     if (found?.url) return found.url;
   }
-  return candidates[0]?.url ?? null;
+  const any = candidates.find((candidate) => looksLikeImageUrl(candidate.url));
+  return any?.url ?? null;
+}
+
+export async function embedSiteLogo(
+  html: string,
+  pageUrl: string,
+  candidates: Array<{ url: string; kind: string }>
+): Promise<string | null> {
+  const $ = cheerio.load(html);
+  const headerImgs = $("header img, nav img, .header img, #header img")
+    .toArray()
+    .map((el) => ({
+      src: $(el).attr("src") || firstSrcset($(el).attr("srcset")) || "",
+      hint: `${$(el).attr("alt") || ""} ${$(el).attr("class") || ""} ${$(el).attr("src") || ""}`.toLowerCase(),
+    }))
+    .filter((item) => item.src && !/icon|menu|hamburger|arrow|close|search/.test(item.hint));
+  headerImgs.sort((a, b) => Number(/logo|wordmark|brand/.test(b.hint)) - Number(/logo|wordmark|brand/.test(a.hint)));
+  for (const item of headerImgs) {
+    const embedded = await embedImage(toAbsolute(item.src, pageUrl));
+    if (embedded) return plateLogo(embedded);
+  }
+  const svg = $("header svg, nav svg, .header svg, #header svg")
+    .toArray()
+    .find((el) => !/icon|menu|hamburger/.test(`${$(el).attr("class") || ""} ${$(el).attr("id") || ""}`.toLowerCase()));
+  if (svg) {
+    const raster = await rasterize(svgDataUrl($.html(svg)));
+    if (raster) return raster;
+  }
+  const touch = $('link[rel="apple-touch-icon"], link[rel="apple-touch-icon-precomposed"]').attr("href");
+  const og = $('meta[property="og:image"]').attr("content");
+  const icon = $('link[rel~="icon"]').attr("href");
+  for (const raw of [touch, og, icon, bestLogoUrl(candidates)]) {
+    const embedded = await embedImage(toAbsolute(raw || "", pageUrl));
+    if (embedded) return plateLogo(embedded);
+  }
+  const marked = $("img")
+    .toArray()
+    .map((el) => ({
+      src: $(el).attr("src") || firstSrcset($(el).attr("srcset")) || "",
+      hint: `${$(el).attr("alt") || ""} ${$(el).attr("class") || ""} ${$(el).attr("src") || ""}`.toLowerCase(),
+    }))
+    .filter((item) => item.src && /logo|wordmark|brand/.test(item.hint));
+  for (const item of marked) {
+    const embedded = await embedImage(toAbsolute(item.src, pageUrl));
+    if (embedded) return plateLogo(embedded);
+  }
+  return null;
+}
+
+async function plateLogo(dataUrl: string): Promise<string> {
+  if (!/^data:image\/(png|jpeg)/.test(dataUrl)) return dataUrl;
+  return (await rasterize(dataUrl)) || dataUrl;
+}
+
+function looksLikeImageUrl(url: string): boolean {
+  if (!url) return false;
+  if (url.startsWith("data:image/")) return true;
+  return /\.(svg|png|jpe?g|webp|gif|ico)(\?|$)/i.test(url) || /framerusercontent\.com\/images\//i.test(url);
+}
+
+function firstSrcset(value: string | undefined): string | null {
+  if (!value) return null;
+  return value.split(",")[0]?.trim().split(/\s+/)[0] || null;
+}
+
+function toAbsolute(raw: string, base: string): string | null {
+  if (!raw) return null;
+  try {
+    const url = new URL(raw, base);
+    if (url.protocol !== "http:" && url.protocol !== "https:") return null;
+    return url.toString();
+  } catch {
+    return null;
+  }
+}
+
+function svgDataUrl(markup: string): string {
+  let svg = markup.trim();
+  if (!/xmlns=/.test(svg)) svg = svg.replace("<svg", '<svg xmlns="http://www.w3.org/2000/svg"');
+  if (!/\bwidth=/.test(svg)) svg = svg.replace("<svg", '<svg width="320" height="80"');
+  return `data:image/svg+xml;base64,${Buffer.from(svg).toString("base64")}`;
 }
 
 export async function embedImage(url: string | null): Promise<string | null> {
@@ -179,6 +261,18 @@ async function rasterize(dataUrl: string): Promise<string | null> {
       ctx.fillStyle = "#ffffff";
       ctx.fillRect(0, 0, canvas.width, canvas.height);
       ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+      const data = ctx.getImageData(0, 0, canvas.width, canvas.height).data;
+      let white = 0;
+      let samples = 0;
+      for (let i = 0; i < data.length; i += 16) {
+        samples += 1;
+        if (data[i] > 230 && data[i + 1] > 230 && data[i + 2] > 230) white += 1;
+      }
+      if (samples > 0 && white / samples > 0.86) {
+        ctx.fillStyle = "#242F28";
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+      }
       return canvas.toDataURL("image/png");
     }, dataUrl);
     if (!png || png.length > 180_000) return null;

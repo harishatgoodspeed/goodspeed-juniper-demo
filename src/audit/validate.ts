@@ -84,6 +84,19 @@ export const AuditResultSchema = z
           .strict()
       )
       .max(12),
+    storyChanges: z
+      .array(
+        z
+          .object({
+            surface: z.string().trim().min(1).max(40),
+            label: z.string().trim().min(1).max(40),
+            sells: z.string().trim().min(1).max(120),
+          })
+          .strict()
+      )
+      .max(8)
+      .optional(),
+    storyVerdict: z.string().trim().min(1).max(500).optional(),
     generatedAt: z.string().trim().min(1).max(40),
   })
   .strict()

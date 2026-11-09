@@ -337,12 +337,26 @@ function evidencePage(result: AuditResult, dateLabel: string): string {
   return `<article class="sheet">
     ${pageBar(result.brand.name)}
     <div class="body">
+      ${storyCard(result)}
       <h2>Side by side</h2>
       <p class="lede">Each pair is something the audit actually read. A missing picture means that file could not be embedded.</p>
       ${blocks}
     </div>
     ${runningFooter(dateLabel)}
   </article>`;
+}
+
+function storyCard(result: AuditResult): string {
+  const rows = result.storyChanges || [];
+  if (rows.length === 0) return "";
+  const lines = rows
+    .map(
+      (row) =>
+        `<li><span class="surf">${escapeHtml(row.label)}</span><span class="detail">${escapeHtml(row.sells)}</span></li>`
+    )
+    .join("");
+  const verdict = result.storyVerdict ? `<p class="lede">${escapeHtml(result.storyVerdict)}</p>` : "";
+  return `<section class="story"><h2>Where your story changes</h2>${verdict}<ul class="findings">${lines}</ul></section>`;
 }
 
 function gapsPage(result: AuditResult, dateLabel: string): string {

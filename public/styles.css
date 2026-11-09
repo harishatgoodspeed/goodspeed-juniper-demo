@@ -158,6 +158,10 @@ input[type="text"], input[type="url"], textarea {
 .steps li { padding: 12px 14px; border-radius: 14px; background: var(--surface); border: 1px solid var(--line); color: var(--muted); }
 .steps li[data-state="active"] { background: var(--ink); color: #f6f4ee; }
 
+#storyBlock:not(:empty) { margin: 8px 0 18px; }
+.story-rows { list-style: none; padding: 0; margin: 0; display: grid; gap: 8px; }
+.story-rows li { display: flex; gap: 12px; align-items: baseline; padding: 12px 14px; border-radius: 14px; background: var(--surface); border: 1px solid var(--line); }
+.story-rows .surf { min-width: 6.5rem; font-size: 0.72rem; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
 .compare-list { display: grid; gap: 12px; }
 .compare {
   display: grid; grid-template-columns: 1fr 1fr; gap: 10px;

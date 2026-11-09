@@ -6,6 +6,7 @@
 
 import * as cheerio from "cheerio";
 import { chromium } from "playwright";
+import { cleanChannelText, decodeHtml } from "./positioning";
 
 export const CHROME_UA =
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
@@ -17,6 +18,8 @@ export interface LinkedInGuest {
   reason: string | null;
   name: string | null;
   tagline: string | null;
+  /** Present when the public description included a follower count. */
+  followers: string | null;
   about: string | null;
   imageUrl: string | null;
 }
@@ -33,13 +36,25 @@ export function parseLinkedInGuest(html: string, status: number, finalUrl: strin
   }
   const $ = cheerio.load(html);
   const name = meta($, "og:title");
-  const tagline = meta($, "og:description") || meta($, "description");
+  const rawTagline = meta($, "og:description") || meta($, "description");
+  const cleaned = rawTagline ? cleanChannelText(rawTagline) : { text: "", followers: null };
+  const tagline = cleaned.text || null;
   const imageUrl = abs(meta($, "og:image") || "", finalUrl);
-  const about = aboutText($);
+  const aboutRaw = aboutText($);
+  const about = aboutRaw ? cleanChannelText(aboutRaw).text || null : null;
   if (!name && !tagline && !about && !imageUrl) {
     return fail("Couldn't read. The public page had no title, tagline, or logo, so nothing was used.");
   }
-  return { ok: true, status, reason: null, name, tagline, about, imageUrl };
+  return {
+    ok: true,
+    status,
+    reason: null,
+    name: name ? decodeHtml(name) : null,
+    tagline,
+    followers: cleaned.followers,
+    about,
+    imageUrl,
+  };
 }
 
 export async function fetchLinkedInGuest(url: string): Promise<LinkedInGuest> {
@@ -71,7 +86,7 @@ async function loadOnce(url: string): Promise<LinkedInGuest> {
 }
 
 function fail(reason: string): LinkedInGuest {
-  return { ok: false, status: 0, reason, name: null, tagline: null, about: null, imageUrl: null };
+  return { ok: false, status: 0, reason, name: null, tagline: null, followers: null, about: null, imageUrl: null };
 }
 
 function meta($: cheerio.CheerioAPI, name: string): string | null {

@@ -536,6 +536,20 @@
   function renderResults() {
     var result = auditResult;
     $("resultsTitle").textContent = "Where " + result.brand.name + " is breaking";
+    var story = $("storyBlock");
+    story.innerHTML = "";
+    if (result.storyChanges && result.storyChanges.length) {
+      story.appendChild(el("h2", { text: "Where your story changes" }));
+      if (result.storyVerdict) story.appendChild(el("p", { text: result.storyVerdict }));
+      var rows = el("ul", { class: "story-rows" });
+      result.storyChanges.forEach(function (row) {
+        var item = el("li");
+        item.appendChild(el("span", { class: "surf", text: row.label }));
+        item.appendChild(el("span", { text: row.sells }));
+        rows.appendChild(item);
+      });
+      story.appendChild(rows);
+    }
     var score = $("scoreBlock");
     score.innerHTML = "";
     if (result.brand.logoUrl) score.appendChild(el("img", { class: "logo", src: result.brand.logoUrl, alt: "" }));

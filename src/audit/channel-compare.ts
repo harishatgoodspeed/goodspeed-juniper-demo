@@ -13,12 +13,14 @@ import {
   blockReason,
   channelLabel,
   embedImage,
+  embedSiteLogo,
   readPublicChannel,
   side,
 } from "./channels";
 import { chromaticHexes } from "./checks";
 import { fetchLinkedInGuest } from "./linkedin-guest";
 import { searchMetaAds } from "./meta-ads";
+import { cleanChannelText, readPositioning, storiesDiffer, storyVerdict } from "./positioning";
 import { readChannelScreenshot } from "./screenshot-read";
 import type { AuditChannelRef, AuditFinding, AuditScreenshot, AuditSurface } from "./types";
 
@@ -33,6 +35,8 @@ export interface ChannelNotes {
   logoCap: number | null;
   messageCap: number | null;
   siteLogoData: string | null;
+  storyRows: Array<{ surface: string; label: string; sells: string }>;
+  storyVerdict: string | null;
 }
 
 export async function compareChannels(
@@ -52,11 +56,13 @@ export async function compareChannels(
     logoCap: null,
     messageCap: null,
     siteLogoData: null,
+    storyRows: [],
+    storyVerdict: null,
   };
   const siteColours = chromaticHexes(siteHtmlColours, 6);
   const siteHeadline = (site.description || site.title || "").trim();
   const siteLogo = bestLogoUrl(site.logoCandidates);
-  const siteLogoData = await embedImage(siteLogo);
+  const siteLogoData = (await embedSiteLogo(siteHtml, site.sourceUrl, site.logoCandidates)) || (await embedImage(siteLogo));
   notes.siteLogoData = siteLogoData;
 
   for (const channel of channels.slice(0, 6)) {
@@ -148,6 +154,7 @@ export async function compareChannels(
         : undefined,
     });
   }
+  finalizeStories(notes, siteHeadline, site.siteName || site.title || "");
   return notes;
 }
 
@@ -187,9 +194,9 @@ async function readLinkedIn(
       },
     });
   }
-  const tagline = guest.tagline;
+  const tagline = guest.tagline ? cleanChannelText(guest.tagline).text : null;
   if (tagline) {
-    addMessage(notes, "linkedin", label, channel.url, siteHeadline, tagline, siteName, guest.name);
+    addMessage(notes, "linkedin", label, channel.url, cleanChannelText(siteHeadline).text, tagline, siteName, guest.name);
   } else {
     notes.messageFindings.push({
       surface: "linkedin",
@@ -341,37 +348,67 @@ function addMessage(
   siteName: string | null,
   pageName: string | null
 ): void {
-  if (!tagline) {
+  const headline = cleanChannelText(siteHeadline).text;
+  const cleaned = tagline ? cleanChannelText(tagline).text : "";
+  if (!cleaned) {
     notes.messageFindings.push({
       surface: kind,
       detail: `Not assessed on ${label}. The public page did not include a tagline or description.`,
-      evidenceUrl: url,
+      ...(url ? { evidenceUrl: url } : {}),
     });
     return;
   }
-  const shared = overlap(siteHeadline, tagline);
-  const token = ((siteName || "").toLowerCase().match(/[a-z0-9]{4,}/) || [""])[0];
-  const haystack = `${pageName || ""} ${tagline}`.toLowerCase().replace(/[^a-z0-9]/g, "");
-  const nameMissing = token.length > 3 && !haystack.includes(token);
-  const mismatch = shared < 2 || nameMissing;
-  if (mismatch) notes.messageCap = Math.min(notes.messageCap ?? 42, 42);
-  const detail = nameMissing
-    ? `The ${label} page name does not use the site name, and the tagline was read beside the site headline.`
-    : mismatch
-      ? `The ${label} tagline does not use the same words as the site headline.`
-      : `The ${label} tagline shares wording with the site headline.`;
   notes.messageFindings.push({
     surface: kind,
-    detail,
-    evidenceUrl: url,
-    whyItMatters: mismatch
-      ? "People should meet the same offer on every channel. When the story shifts, buyers get confused and the work is redone."
-      : undefined,
+    detail: `The ${label} tagline was read beside the site headline.`,
+    ...(url ? { evidenceUrl: url } : {}),
     comparison: {
-      site: side("Site headline", { text: siteHeadline || siteName }),
-      other: side(`${label} tagline`, { text: tagline }),
+      site: side("Site headline", { text: headline || siteName }),
+      other: side(`${label} tagline`, { text: cleaned }),
     },
   });
+  void pageName;
+}
+
+function finalizeStories(notes: ChannelNotes, siteHeadline: string, siteName: string): void {
+  const sitePos = readPositioning(siteHeadline, siteName);
+  const rows: ChannelNotes["storyRows"] = [{ surface: "site", label: "Site", sells: sitePos.sells }];
+  let differ = false;
+  for (const finding of notes.messageFindings) {
+    if (finding.surface === "meta" || finding.surface === "site") continue;
+    if (!finding.comparison?.other.text || finding.detail.startsWith("Not assessed")) continue;
+    const pos = readPositioning(finding.comparison.other.text, siteName);
+    const label = channelLabel(finding.surface as AuditChannelRef["kind"]);
+    rows.push({ surface: finding.surface, label, sells: pos.sells });
+    if (pos.sells !== sitePos.sells && storiesDiffer(sitePos.tokens, pos.tokens)) differ = true;
+  }
+  if (rows.length < 2) return;
+  const order = ["site", "linkedin", "youtube", "instagram", "x", "blog", "meta"];
+  rows.sort((a, b) => order.indexOf(a.surface) - order.indexOf(b.surface));
+  const changed = rows.slice(1).filter((row) => {
+    const finding = notes.messageFindings.find((item) => item.surface === row.surface && item.comparison?.other.text);
+    if (!finding?.comparison?.other.text) return false;
+    const pos = readPositioning(finding.comparison.other.text, siteName);
+    return pos.sells !== sitePos.sells && storiesDiffer(sitePos.tokens, pos.tokens);
+  });
+  notes.storyRows = rows;
+  notes.storyVerdict = changed.length
+    ? storyVerdict(sitePos.sells, changed)
+    : `The channels tell the same story: ${sitePos.sells}.`;
+  if (differ) notes.messageCap = Math.min(notes.messageCap ?? 36, 36);
+  for (const finding of notes.messageFindings) {
+    if (finding.surface === "meta" || !finding.comparison?.other.text || finding.detail.startsWith("Not assessed")) continue;
+    const pos = readPositioning(finding.comparison.other.text, siteName);
+    const label = channelLabel(finding.surface as AuditChannelRef["kind"]);
+    const mismatch = pos.sells !== sitePos.sells && storiesDiffer(sitePos.tokens, pos.tokens);
+    if (mismatch && notes.storyVerdict) {
+      finding.detail = notes.storyVerdict;
+      finding.whyItMatters =
+        "People should meet the same offer on every channel. When the story shifts, buyers get confused and the work is redone.";
+    } else {
+      finding.detail = `The ${label} tagline tells the same story as the site: ${pos.sells}.`;
+    }
+  }
 }
 
 function isPlatformHost(url: string): boolean {
@@ -383,18 +420,3 @@ function isPlatformHost(url: string): boolean {
   }
 }
 
-function overlap(left: string, right: string): number {
-  const stop = new Set(["the", "and", "for", "with", "that", "this", "from", "your", "you", "are", "our", "into"]);
-  const words = (text: string) =>
-    new Set(
-      text
-        .toLowerCase()
-        .replace(/[^a-z0-9\s]/g, " ")
-        .split(/\s+/)
-        .filter((word) => word.length > 3 && !stop.has(word))
-    );
-  const a = words(left);
-  let count = 0;
-  for (const word of words(right)) if (a.has(word)) count += 1;
-  return count;
-}

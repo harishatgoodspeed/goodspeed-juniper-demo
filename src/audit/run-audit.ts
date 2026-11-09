@@ -179,7 +179,10 @@ export async function runAudit(body: unknown, deps: AuditDeps = {}): Promise<Aud
   ];
   checks[0] = withChannelFindings(checks[0], channelNotes.paletteFindings, channelNotes.paletteCap);
   checks[1] = withChannelFindings(checks[1], channelNotes.logoFindings, channelNotes.logoCap);
-  checks[4] = withChannelFindings(checks[4], channelNotes.messageFindings, channelNotes.messageCap);
+  checks[4] =
+    channelNotes.storyRows.length > 1
+      ? makeCheck("message", channelNotes.messageCap ?? 88, channelNotes.messageFindings.slice(0, 12))
+      : withChannelFindings(checks[4], channelNotes.messageFindings, channelNotes.messageCap);
 
   const logo = bestLogoUrl(siteContext.logoCandidates);
 
@@ -206,6 +209,12 @@ export async function runAudit(body: unknown, deps: AuditDeps = {}): Promise<Aud
       requested: dedupe([...request.tools, ...request.formats]),
     },
     skippedSurfaces: skipped,
+    ...(channelNotes.storyRows.length > 1
+      ? {
+          storyChanges: channelNotes.storyRows,
+          ...(channelNotes.storyVerdict ? { storyVerdict: channelNotes.storyVerdict } : {}),
+        }
+      : {}),
     generatedAt,
   };
 }

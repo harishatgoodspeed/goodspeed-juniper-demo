@@ -12,8 +12,20 @@ test("a guest LinkedIn page keeps only the public meta that is present", () => {
   assert.equal(guest.ok, true);
   assert.equal(guest.name, "Goodspeed Studio");
   assert.match(guest.tagline || "", /redesign websites/);
+  assert.equal(guest.followers, null);
   assert.match(guest.about || "", /ships them in weeks/);
   assert.match(guest.imageUrl || "", /logo\.png/);
+});
+
+test("follower boilerplate and HTML entities are removed from the tagline", () => {
+  const html = `<html><head>
+    <meta property="og:description" content="Bent Pixels | 2,295 followers on LinkedIn. We don&#39;t buy impressions.">
+  </head></html>`;
+  const guest = parseLinkedInGuest(html, 200, "https://www.linkedin.com/company/bentpixels");
+  assert.equal(guest.ok, true);
+  assert.equal(guest.followers, "2,295");
+  assert.match(guest.tagline || "", /^We don't buy impressions/);
+  assert.equal((guest.tagline || "").includes("followers"), false);
 });
 
 test("a login wall, a 999, and an empty page are Couldn't read", () => {

@@ -82,6 +82,13 @@ export interface AuditBrand {
   voiceSummary: string;
 }
 
+export interface StoryChange {
+  surface: string;
+  label: string;
+  /** What that channel is selling, in a short phrase. */
+  sells: string;
+}
+
 export interface AuditResult {
   brand: AuditBrand;
   /** Integer from 0 to 100. */
@@ -94,6 +101,10 @@ export interface AuditResult {
     requested: string[];
   };
   skippedSurfaces: Array<{ surface: string; reason: string }>;
+  /** One row per channel, including the site, when a story was compared. */
+  storyChanges?: StoryChange[];
+  /** One line naming how the offer changes, when the stories were compared. */
+  storyVerdict?: string;
   generatedAt: string;
 }
 
