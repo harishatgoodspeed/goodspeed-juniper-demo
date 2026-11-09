@@ -12,6 +12,7 @@ import { config } from "../config";
 import type { Brief, RenderEvidence } from "../pipeline-types";
 import type { BrandContext } from "../import/types";
 import type { ApprovedBrandContext } from "../llm";
+import { approvedImagePaths } from "../imagery";
 
 export interface RunGenerateJobDeps {
   /** Injectable for tests, so this never needs a real Chromium install to be exercised offline. */
@@ -55,7 +56,8 @@ export async function runGenerateJob(db: Database.Database, job: JobRow, deps: R
     ? await resolveFontFaces(approved.fonts, JSON.parse(brand.context_json) as BrandContext)
     : new Map<string, ResolvedFontFace>();
 
-  const assets: RenderAssets = { logoPath: logoAsset?.local_path ?? undefined, imagePaths: [], fontFaces };
+  const imagePaths = approvedImagePaths(db, brand.id, approved.approvedImageAssetIds);
+  const assets: RenderAssets = { logoPath: logoAsset?.local_path ?? undefined, imagePaths, fontFaces };
 
   const outDir = path.join(config.ASSET_DIR, "brands", brand.id, "outputs", run.id);
   fs.mkdirSync(outDir, { recursive: true });

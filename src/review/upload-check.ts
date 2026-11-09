@@ -157,3 +157,21 @@ export async function checkUploadAgainstBrand(
     totalApproved: approvedHexes.length,
   };
 }
+
+/** The most common chromatic colours actually present in an upload. No names are inferred. */
+export async function paletteFromUpload(buffer: Buffer, mimeType: string): Promise<string[]> {
+  const decoded = await samplePixels(buffer, mimeType, 32);
+  if (!decoded || decoded.samples.length === 0) return [];
+  const counts = new Map<string, number>();
+  for (const sample of decoded.samples) {
+    const max = Math.max(sample.r, sample.g, sample.b);
+    const min = Math.min(sample.r, sample.g, sample.b);
+    if (max - min < 18 || min >= 242 || max <= 22) continue;
+    const hex = rgbToHex(sample.r & 0xf0, sample.g & 0xf0, sample.b & 0xf0);
+    counts.set(hex, (counts.get(hex) ?? 0) + 1);
+  }
+  return [...counts.entries()]
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 6)
+    .map(([hex]) => hex);
+}

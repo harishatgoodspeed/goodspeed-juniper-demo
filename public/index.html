@@ -3,101 +3,182 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Goodspeed Brand OS</title>
+  <title>See where your brand is breaking, Goodspeed</title>
+  <meta name="description" content="See where your brand is breaking. A free audit for SaaS and AI founders and marketing leads. No email and no sign-up.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400;12..96,560&family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,560;1,9..40,400&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="/styles.css">
 </head>
 <body>
-  <header class="topbar">
-    <span class="brand">Goodspeed Brand OS</span>
-    <span class="phase-tag">Free tool</span>
-    <button id="logoutBtn" class="btn btn-ghost">Start over</button>
+  <a class="skip" href="#app">Skip to content</a>
+  <header class="top">
+    <div class="mark">Goodspeed</div>
+    <ol id="stageBar" class="stage-bar" aria-label="Progress">
+      <li data-stage="brand"><span>Your brand</span><i class="dashes" aria-hidden="true"><b></b><b></b><b></b><b></b><b></b></i></li>
+      <li data-stage="channels"><span>Your channels</span><i class="dashes" aria-hidden="true"><b></b><b></b><b></b><b></b><b></b></i></li>
+      <li data-stage="tools"><span>Your tools</span><i class="dashes" aria-hidden="true"><b></b><b></b><b></b><b></b><b></b></i></li>
+      <li data-stage="audit"><span>Your audit</span><i class="dashes" aria-hidden="true"><b></b><b></b><b></b><b></b><b></b></i></li>
+    </ol>
+    <button id="logoutBtn" class="text-btn" type="button">Start over</button>
   </header>
+  <div id="statusChip" class="status-chip" hidden>
+    <strong id="chipHost"></strong>
+    <span id="chipState">Reading</span>
+    <span id="chipStep"></span>
+    <button id="chipDetails" type="button">Details</button>
+    <button id="chipChange" type="button">Change</button>
+  </div>
+  <p id="chipDetail" class="chip-detail" hidden></p>
 
-  <main id="app" class="wrap">
-    <section id="importView" hidden>
-      <h1>Paste your URL. Get on-brand posts, already checked.</h1>
-      <p>We fetch your site's own palette, type and logo, you approve what to use, and we draft real LinkedIn posts, checked against your brand before you see them. No account, no agent setup.</p>
-      <form id="importForm" class="stack">
-        <label for="siteUrl">Website address</label>
-        <input id="siteUrl" name="url" type="url" placeholder="https://example.com" required>
-        <button type="submit" class="btn btn-primary">Import brand context</button>
+  <main id="app">
+    <section id="urlView" class="screen">
+      <form id="importForm" class="question">
+        <p class="mark-dot" aria-hidden="true">G</p>
+        <h1 tabindex="-1">What's your website?</h1>
+        <p class="sub">For SaaS and AI founders, and for marketing leads. We read the public page. No email and no sign-up.</p>
+        <div class="url-field">
+          <label class="sr" for="siteUrl">Website address</label>
+          <input id="siteUrl" name="url" type="url" placeholder="https://goodspeed.studio" required autocomplete="url">
+          <button class="pill dark" type="submit">Read my site <kbd>Enter</kbd></button>
+        </div>
         <p id="importError" class="error" role="alert" hidden></p>
+        <button id="showExample" class="text-btn" type="button">See an example report</button>
       </form>
-
-      <div id="jobStatus" class="status-card" hidden>
-        <p id="jobStatusText" aria-live="polite"></p>
-      </div>
-
-      <div id="brandList"></div>
+      <article id="sampleCard" class="sample" hidden aria-label="Bent Pixels example report">
+        <p class="eyebrow">Example only. Bent Pixels is the only sample brand.</p>
+        <div id="sampleBody"><p class="quiet">Loading the example report.</p></div>
+        <p class="quiet">Example report, not a live audit. Company facts are from <a href="https://www.bentpixels.com/">bentpixels.com</a>.</p>
+      </article>
+      <form id="manualForm" class="question" hidden>
+        <h1 tabindex="-1">Tell us the brand</h1>
+        <p class="sub">A name and what you offer. We will not invent the rest.</p>
+        <label for="manualName">Business name</label>
+        <input id="manualName" type="text" required autocomplete="organization">
+        <label for="manualOffer">What you offer</label>
+        <textarea id="manualOffer" rows="3" required></textarea>
+        <button class="pill dark" type="submit">Use this</button>
+        <p id="manualError" class="error" role="alert" hidden></p>
+      </form>
     </section>
 
-    <section id="resultView" hidden>
-      <button id="backBtn" class="btn btn-ghost">Back to imports</button>
-      <h1 id="resultTitle">Brand import</h1>
-      <p id="resultMeta" class="meta"></p>
-
-      <div id="resultUnknowns" class="callout" hidden>
-        <h2>Unknowns</h2>
-        <ul id="unknownsList"></ul>
+    <section id="readingView" class="screen" hidden>
+      <div class="question">
+        <p class="mark-dot" aria-hidden="true">G</p>
+        <h1 tabindex="-1">I'm reading your site for your brand profile now.</h1>
+        <p class="sub">It fills in below as I go. Anything still queued has not been read yet.</p>
+        <article class="read-card">
+          <div class="read-top">
+            <div id="readBar" class="seg" aria-hidden="true"></div>
+            <p id="readCount" class="count">1 of 3</p>
+          </div>
+          <p id="readStatus" role="status">Reading the public page.</p>
+          <section>
+            <h2>Look</h2>
+            <div id="readLook" class="quiet">Queued</div>
+          </section>
+          <section>
+            <h2>Voice</h2>
+            <div id="readVoice" class="quiet">Reading how you talk to buyers</div>
+          </section>
+          <section>
+            <h2>Channels</h2>
+            <div id="readChannels" class="quiet">Queued</div>
+          </section>
+        </article>
+        <div id="blockedBox" hidden>
+          <p id="blockedText" class="error" role="alert"></p>
+          <button id="retryImport" class="pill dark" type="button">Try again</button>
+          <button id="correctUrl" class="pill light" type="button">Use a different address</button>
+        </div>
       </div>
+    </section>
 
-      <h2>Logo candidates</h2>
-      <p class="hint">Pick the one to carry forward, or treat none of them as approved.</p>
-      <div id="logoCandidates" class="card-grid"></div>
-
-      <h2>Colour candidates</h2>
-      <p class="hint">Declaration count is how many times a value appeared in the stylesheets, not a measure of visual prominence.</p>
-      <div id="colourCandidates" class="card-grid"></div>
-
-      <h2>Type candidates</h2>
-      <div id="fontCandidates" class="card-grid"></div>
-
-      <h2>Readable copy excerpt</h2>
-      <p id="textExcerpt" class="excerpt"></p>
-
-      <h2>Source files</h2>
-      <ul id="sourceAssets" class="file-list"></ul>
-
-      <h2>Voice</h2>
-      <p class="hint">How should your copy sound? Leave this blank and we will keep it plain and confident, with no exclamation points.</p>
-      <textarea id="voiceNotes" rows="3" placeholder="e.g. Confident, no exclamation points, short sentences."></textarea>
-
-      <div class="actions">
-        <button id="approveBtn" class="btn btn-primary">Save approved selection</button>
-        <p id="approveStatus" aria-live="polite"></p>
+    <section id="profileView" class="screen" hidden>
+      <div class="question wide">
+        <p class="count" id="profileCount">Your brand</p>
+        <h1 id="profileTitle" tabindex="-1">Here's the brand, as we read it.</h1>
+        <p class="sub">Change anything with Edit. It saves in place. Unknown means we did not find it.</p>
+        <div id="profileGrid" class="profile-grid"></div>
+        <div class="row">
+          <button id="backToUrl" class="text-btn" type="button">Back</button>
+          <button id="useBrand" class="pill dark" type="button">This is the brand</button>
+        </div>
+        <p id="approveError" class="error" role="alert" hidden></p>
       </div>
-      <p class="hint"><a id="snapshotLink" href="#" target="_blank" rel="noopener">Download your brand snapshot (brand.md)</a>. A Claude ready file with your approved palette, fonts and voice, free, no email required.</p>
+    </section>
 
-      <h2>Get your on-brand posts</h2>
-      <p class="hint">Needs an approved selection saved above first. We will draft LinkedIn, Instagram and X images plus a post caption, checked against your brand before you see them.</p>
-      <form id="runForm" class="stack">
-        <label for="runTask">What should these posts be about</label>
-        <input id="runTask" name="task" type="text" placeholder="Launch announcement for the new collection" required>
-        <button type="submit" class="btn btn-primary">Generate posts</button>
-        <p id="runError" class="error" role="alert" hidden></p>
-      </form>
-      <div id="runStatus" class="status-card" hidden>
-        <p id="runStatusText" aria-live="polite"></p>
+    <section id="channelsView" class="screen" hidden>
+      <div class="question wide">
+        <p class="count">Your channels</p>
+        <h1 tabindex="-1">Are these your channels?</h1>
+        <p class="sub">Found in the site links, footer, and sameAs data. Keep the ones to check. Drop the rest. You can also type a number to keep or drop.</p>
+        <div id="channelGrid" class="card-grid"></div>
+        <label for="linkedinText">LinkedIn text, only if the public page is blocked</label>
+        <textarea id="linkedinText" rows="4" placeholder="Paste the about line or a few posts"></textarea>
+        <p class="quiet">We open the public LinkedIn page once, as a logged-out guest, and read only the title, logo, tagline, and about text if they are there. If that comes back as a login wall, the channel is marked Couldn't read. Paste the text, or add a screenshot of LinkedIn, X, or Instagram. Meta Ad Library only covers ads shown in the EU.</p>
+        <div class="row">
+          <button id="backToProfile" class="text-btn" type="button">Back</button>
+          <button id="keepChannels" class="pill dark" type="button">Continue</button>
+        </div>
+        <p id="channelsError" class="error" role="alert" hidden></p>
       </div>
-      <div id="runResult"></div>
+    </section>
 
-      <h2>Check an existing design against your brand</h2>
-      <p class="hint">Upload an image (PNG, JPEG, WebP or GIF) and we will check its colours against your approved palette. Colour only for now, not fonts or logo fidelity.</p>
-      <form id="uploadCheckForm" class="stack">
-        <input id="uploadCheckFile" name="file" type="file" accept="image/png,image/jpeg,image/webp,image/gif" required>
-        <button type="submit" class="btn btn-primary">Check against our brand</button>
-        <p id="uploadCheckError" class="error" role="alert" hidden></p>
-      </form>
-      <div id="uploadCheckResult"></div>
+    <section id="toolsView" class="screen" hidden>
+      <div class="question wide">
+        <p class="count" id="toolCount">1 of 2</p>
+        <h1 id="toolTitle" tabindex="-1">Which tools do you use?</h1>
+        <p class="sub" id="toolSub">Pick at least one. You can also type a number.</p>
+        <div id="choiceGrid" class="chips"></div>
+        <label id="otherWrap" hidden>Other
+          <input id="otherText" type="text" maxlength="80">
+        </label>
+        <div class="row">
+          <button id="toolBack" class="text-btn" type="button">Back</button>
+          <button id="toolNext" class="pill dark" type="button">Continue</button>
+        </div>
+        <p id="toolsError" class="error" role="alert" hidden></p>
+        <p id="rateNote" class="note" hidden>You have reached the free limit of 6 audits an hour. <a href="https://goodspeed.studio/contact">Talk to Goodspeed</a> if you want a person to take it from here.</p>
+      </div>
+    </section>
 
-      <h2>Sharing</h2>
-      <p class="hint">Results are private until you enable a link. Anyone with an enabled link can view the result page and download its outputs.</p>
-      <button id="enableShareBtn" class="btn btn-primary">Enable a share link</button>
-      <div id="shareReveal" class="status-card" hidden></div>
-      <ul id="shareList" class="file-list"></ul>
+    <section id="auditView" class="screen" hidden>
+      <div class="question">
+        <p class="mark-dot" aria-hidden="true">G</p>
+        <h1 tabindex="-1">Checking your brand across the channels you kept.</h1>
+        <p id="auditStatus" role="status">Checking your site</p>
+        <ol id="auditSteps" class="steps">
+          <li data-step="site">Checking your site</li>
+          <li data-step="channels">Checking the channels you kept</li>
+          <li data-step="report">Writing your report</li>
+        </ol>
+      </div>
+    </section>
+
+    <section id="resultsView" class="screen" hidden>
+      <div class="question wide">
+        <h1 id="resultsTitle" tabindex="-1">Where your brand is breaking</h1>
+        <section id="storyBlock"></section>
+        <div id="scoreBlock"></div>
+        <section id="compareBlock"></section>
+        <section id="breaksBlock"></section>
+        <section id="scorecardBlock"></section>
+        <section id="toolsBlock"></section>
+        <section id="skippedBlock"></section>
+        <div class="row">
+          <button id="downloadPdf" class="pill dark" type="button">Download PDF</button>
+          <a id="snapshotLink" class="pill light" href="#">Download brand.md</a>
+        </div>
+        <p id="pdfStatus" class="quiet" role="status"></p>
+        <aside class="next">
+          <h2>Next step</h2>
+          <p>A starter begins from the designs you already approved. No price is listed here.</p>
+          <a class="pill dark" href="https://goodspeed.studio/contact">Talk to Goodspeed</a>
+        </aside>
+      </div>
     </section>
   </main>
-
   <script src="/app.js"></script>
 </body>
 </html>

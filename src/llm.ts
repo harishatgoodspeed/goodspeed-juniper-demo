@@ -19,6 +19,10 @@ export interface ApprovedBrandContext {
   fonts: string[];
   /** Freeform voice guidance the owner approved (e.g. "confident, no exclamation points, short sentences"). Empty string if none was given — never invented. */
   voiceNotes: string;
+  /** Owned uploads the visitor confirmed. Absent means none are approved. */
+  approvedImageAssetIds?: string[];
+  /** Explicit UK or US choice. When set, it wins over spelling detected on the site. */
+  englishVariant?: "uk" | "us";
 }
 
 export interface GenerateBriefsInput {
@@ -85,19 +89,21 @@ const BriefShape = z.object({
 });
 
 const BriefsToolInput = z.object({
-  briefs: z.array(BriefShape).length(OUTPUT_TYPES.length),
+  briefs: z.array(BriefShape).min(1).max(8),
 });
 
 function systemPrompt(): string {
   return [
     "You are drafting creative briefs for a brand's marketing assets.",
-    "You must produce exactly one brief for each of these output types: " + OUTPUT_TYPES.join(", ") + ".",
+    "Produce one brief for each output type you are asked for. A resized copy of another brief is not a new asset. The legacy set, when asked for, is: " +
+      OUTPUT_TYPES.join(", ") +
+      ".",
     "",
     "Hard rules:",
     "- paletteTokenHexes must only contain hex values copied exactly from the approved palette you are given. Never invent, lighten, darken, or guess at a hex not in that list. Order matters: the renderer reads paletteTokenHexes as [background, primary/brand, body text, accent/CTA] in that position order, so list the approved hexes in that role order (repeat one if you don't have 4 distinct roles to fill, rather than leaving a later slot blank).",
     "- fontFamilies must only contain family names copied exactly from the approved fonts you are given. Never invent a font. Order matters: the renderer reads fontFamilies as [heading, body] in that position order.",
     "- logoAssetId must be exactly the approved logo asset ID you are given, or null if none was given. Never invent an asset ID.",
-    "- imageAssetIds must always be an empty array. No image assets are approved for use yet.",
+    "- imageAssetIds may only contain ids from the approved owned image list in the prompt. If that list is empty, imageAssetIds must be an empty array. Never use an image just because it appeared on the website.",
     "- sourcedFactualCopy and postCopyText (for the post_copy brief only) must contain only facts that are explicitly present in the brand description or page excerpt you are given. If a commercial fact (a price, a date, a metric, a partner name, a quote) is not explicitly given to you, do not invent a plausible-sounding one — put a note about the missing fact in that brief's unknowns array instead.",
     "- Never invent testimonials, review scores, or results.",
     "- Voice: write without exclamation points, matching any voice guidance you are given.",
@@ -128,7 +134,11 @@ function userPrompt(input: GenerateBriefsInput): string {
     "Brand page excerpt (further source of facts):",
     input.rawContext.textExcerpt || "(none extracted)",
     "",
-    englishVariantInstruction(detectEnglishVariant(`${input.rawContext.description ?? ""} ${input.rawContext.textExcerpt}`)),
+    input.context.englishVariant === "us"
+      ? "The visitor explicitly chose American English. Use American spelling even if the site looks British."
+      : input.context.englishVariant === "uk"
+        ? "The visitor explicitly chose British English. Use British spelling even if the site looks American."
+        : englishVariantInstruction(detectEnglishVariant(`${input.rawContext.description ?? ""} ${input.rawContext.textExcerpt}`)),
   ].filter((l): l is string => l !== null);
   return lines.join("\n");
 }
@@ -156,10 +166,13 @@ function validateReferences(brief: Brief, context: ApprovedBrandContext): void {
     );
   }
 
-  if (brief.imageAssetIds.length > 0) {
-    throw new BriefReferenceError(
-      `Brief for "${brief.outputType}" referenced image asset IDs (${brief.imageAssetIds.join(", ")}), but no image assets are approved yet — this field must be empty until the approval flow supports it.`
-    );
+  const approvedImages = new Set(context.approvedImageAssetIds ?? []);
+  for (const imageId of brief.imageAssetIds) {
+    if (!approvedImages.has(imageId)) {
+      throw new BriefReferenceError(
+        `Brief for "${brief.outputType}" referenced image asset ${imageId}, which is not an owned image the visitor confirmed.`
+      );
+    }
   }
 }
 
@@ -199,11 +212,9 @@ export async function generateBriefs(
     }
   }
 
-  const gotTypes = new Set(briefs.map((b) => b.outputType));
-  for (const t of OUTPUT_TYPES) {
-    if (!gotTypes.has(t)) {
-      throw new BriefValidationError(`Missing a brief for output type "${t}"`);
-    }
+  const gotTypes = briefs.map((b) => b.outputType);
+  if (new Set(gotTypes).size !== gotTypes.length) {
+    throw new BriefValidationError("Duplicate output type in briefs. A second file of the same type is not a new post.");
   }
 
   return {

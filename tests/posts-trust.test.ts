@@ -1,0 +1,337 @@
+import { test } from "node:test";
+import assert from "node:assert/strict";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import Database from "better-sqlite3";
+import { PNG } from "pngjs";
+import type { AddressInfo } from "node:net";
+import { createApp } from "../src/server";
+import { runMigrations } from "../src/db";
+import { openTestDb } from "../src/db";
+import { createAnonymousOwner } from "../src/security/session";
+import { createBrand, setApprovedContext, setBrandContext } from "../src/brands";
+import { createRun, getRun } from "../src/runs";
+import { buildZip } from "../src/zip-safe";
+import { createOutput } from "../src/outputs";
+import { buildSourceLedger, unsupportedNumericTokens, verifyCitedClaims } from "../src/ledger";
+import { reviewOutput, computeOverallPass } from "../src/review/review";
+import { assessCopy } from "../src/review/copy-assessment";
+import { tryReserve } from "../src/spend";
+import { config } from "../src/config";
+import { approvedImagePaths } from "../src/imagery";
+import { purgeExpiredBrands } from "../src/retention";
+import type { Brief } from "../src/pipeline-types";
+import type { BrandContext } from "../src/import/types";
+
+function context(): BrandContext {
+  return {
+    sourceUrl: "https://example.com",
+    fetchedAt: "2026-11-07T00:00:00.000Z",
+    extractionMethod: "static-html-css",
+    title: "Example boots",
+    siteName: "Example",
+    description: "Example Co repairs walking boots in a small workshop.",
+    logoCandidates: [],
+    colours: [],
+    cssCustomProperties: [],
+    fonts: [],
+    googleFontsLinks: [],
+    images: [],
+    textExcerpt: "Example Co repairs walking boots in a small workshop.",
+    textTruncated: false,
+    stylesheetsFetched: 0,
+    stylesheetsSkipped: 0,
+    unknowns: [],
+  };
+}
+
+test("a fabricated figure is rejected even when the caption and the generated fact list both contain it", async () => {
+  const ledger = buildSourceLedger({
+    sourceUrl: "https://example.com",
+    description: "We repair boots in the workshop.",
+    textExcerpt: "We repair boots in the workshop.",
+    retrievedAt: "2026-11-07T00:00:00.000Z",
+  });
+  const fake = "Revenue grew 400% in 2024";
+  const brief: Brief = {
+    outputType: "linkedin_image",
+    purpose: "Announce",
+    audience: "Walkers",
+    sourcedFactualCopy: [fake],
+    layoutDirection: "text",
+    paletteTokenHexes: ["#F4F1EA"],
+    fontFamilies: ["Georgia"],
+    logoAssetId: null,
+    imageAssetIds: [],
+    voiceGuidance: "Plain.",
+    unknowns: [],
+  };
+  let sawWhitelist = false;
+  const result = await reviewOutput(
+    {
+      outputType: "linkedin_image",
+      filePath: null,
+      width: 1080,
+      height: 1350,
+      regions: [],
+      fontChecks: [],
+      logoCheck: null,
+      overflow: false,
+      text: `${fake}. We repair boots in the workshop.`,
+      layout: { overflow: false, overlap: false, minBodyPx: 36, contrastRatio: 7, problems: [] },
+    },
+    brief,
+    {
+      ledger,
+      copyAssessmentClient: {
+        messages: {
+          parse: async (params) => {
+            const body = JSON.stringify(params);
+            sawWhitelist = body.includes("Sourced facts this copy was allowed");
+            return { parsed_output: { factsAreAllSourced: true, inventedOrUnsupportedClaims: [], matchesVoiceGuidance: true, voiceMismatchExplanation: "" } };
+          },
+        },
+      },
+    }
+  );
+  const copy = result.checks.find((check) => check.kind === "copy");
+  assert.equal(copy?.status, "fail");
+  assert.match(copy!.explanation, /400%/);
+  assert.equal(sawWhitelist, false, "the auditor must not be given the model's own fact list");
+  assert.equal(result.overallPass, false);
+  assert.equal(computeOverallPass([]), false);
+});
+
+test("cited claims fail when the ledger id is real but the excerpt does not support the sentence", () => {
+  const ledger = buildSourceLedger({
+    sourceUrl: "https://example.com/about",
+    description: "We repair boots in the workshop.",
+    textExcerpt: "We repair boots in the workshop.",
+    retrievedAt: "2026-11-07T00:00:00.000Z",
+  });
+  const verdict = verifyCitedClaims(
+    [{ text: "Revenue grew 400% in 2024 after the rebrand", ledgerIds: [ledger[0].id], kind: "fact" }],
+    ledger
+  );
+  assert.equal(verdict.ok, false);
+  assert.equal(unsupportedNumericTokens("since 1998", "since 1998").length, 0);
+});
+
+test("owned images are wired through and scraped page images are not", () => {
+  const db = openTestDb();
+  const owner = createAnonymousOwner(db);
+  const brand = createBrand(db, owner, "https://example.com");
+  const owned = path.join(os.tmpdir(), `owned-${owner}.png`);
+  fs.writeFileSync(owned, "png");
+  db.prepare(
+    `INSERT INTO owned_uploads (id, brand_id, local_path, mime_type, byte_size, width, height, ownership_confirmed)
+     VALUES ('upload_1', ?, ?, 'image/png', 3, 10, 10, 1)`
+  ).run(brand.id, owned);
+  db.prepare(
+    `INSERT INTO source_assets (id, brand_id, origin_url, kind, local_path, mime_type)
+     VALUES ('asset_site', ?, 'https://example.com/pic.jpg', 'content_image', '/tmp/site.jpg', 'image/jpeg')`
+  ).run(brand.id);
+  const paths = approvedImagePaths(db, brand.id, ["upload_1", "asset_site"]);
+  assert.deepEqual(paths, [owned]);
+  fs.rmSync(owned, { force: true });
+});
+
+test("legacy runs stay readable after the posts migration", () => {
+  const db = openTestDb();
+  const owner = createAnonymousOwner(db);
+  const brand = createBrand(db, owner, "https://example.com");
+  const run = createRun(db, brand.id, "Old", null, 0);
+  assert.equal(getRun(db, run.id)?.mode, "legacy");
+  const output = createOutput(db, run.id, "linkedin_image", "{}");
+  assert.equal(output.type, "linkedin_image");
+});
+
+test("zip entry names cannot escape", () => {
+  assert.throws(() => buildZip([{ name: "../caption.txt", data: "nope" }]));
+});
+
+test("concurrent reservations cannot both pass a budget that only covers one", async () => {
+  const file = path.join(os.tmpdir(), `spend-${Date.now()}.db`);
+  const setup = new Database(file);
+  runMigrations(setup);
+  const room = config.PER_VISITOR_DAILY_SPEND_USD - config.RUN_RESERVATION_USD;
+  setup.prepare(
+    `INSERT INTO api_usage (id, owner_id, kind, prompt_tokens, completion_tokens, estimated_usd, status)
+     VALUES ('spend_seed', 'owner_a', 'seed', 0, 0, ?, 'settled')`
+  ).run(room);
+  setup.close();
+  const left = new Database(file);
+  const right = new Database(file);
+  left.pragma("busy_timeout = 5000");
+  right.pragma("busy_timeout = 5000");
+  const results = await Promise.all([
+    Promise.resolve().then(() => tryReserve(left, { ownerId: "owner_a", kind: "run", usd: config.RUN_RESERVATION_USD })),
+    Promise.resolve().then(() => tryReserve(right, { ownerId: "owner_a", kind: "run", usd: config.RUN_RESERVATION_USD })),
+  ]);
+  assert.equal(results.filter((result) => result.ok).length, 1);
+  assert.equal(results.filter((result) => !result.ok).length, 1);
+  left.close();
+  right.close();
+  fs.rmSync(file, { force: true });
+});
+
+test("expired anonymous brands are removed and share content has no email field", () => {
+  const db = openTestDb();
+  const owner = createAnonymousOwner(db);
+  const brand = createBrand(db, owner, "https://example.com");
+  db.prepare(`UPDATE brands SET created_at = '2020-01-01T00:00:00.000Z' WHERE id = ?`).run(brand.id);
+  db.prepare(`INSERT INTO leads (id, brand_id, email, consent) VALUES ('lead_1', ?, 'person@example.com', 1)`).run(brand.id);
+  const removed = purgeExpiredBrands(db, new Date("2026-11-07T00:00:00.000Z"), os.tmpdir());
+  assert.deepEqual(removed, [brand.id]);
+  const lead = db.prepare(`SELECT id FROM leads WHERE brand_id = ?`).get(brand.id);
+  assert.equal(lead, undefined);
+});
+
+function noisyPng(width: number, height: number): Buffer {
+  const png = new PNG({ width, height });
+  for (let i = 0; i < png.data.length; i += 4) {
+    png.data[i] = (i * 17) % 255;
+    png.data[i + 1] = (i * 9) % 255;
+    png.data[i + 2] = (i * 3) % 255;
+    png.data[i + 3] = 255;
+  }
+  return PNG.sync.write(png);
+}
+
+function pngHeader(width: number, height: number): Buffer {
+  const buf = Buffer.alloc(24);
+  buf.write("\x89PNG\r\n\x1a\n", 0, "binary");
+  buf.writeUInt32BE(13, 8);
+  buf.write("IHDR", 12);
+  buf.writeUInt32BE(width, 16);
+  buf.writeUInt32BE(height, 20);
+  return buf;
+}
+
+async function start() {
+  const { app, db } = createApp();
+  const server = app.listen(0, "127.0.0.1");
+  await new Promise((resolve) => server.once("listening", resolve));
+  const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+  return { server, db, base };
+}
+
+async function login(base: string) {
+  const res = await fetch(`${base}/api/session`);
+  const cookies = res.headers.getSetCookie().join("; ");
+  const session = cookies.match(/gs_session=([^;]+)/)![1];
+  const csrf = decodeURIComponent(cookies.match(/gs_csrf=([^;]+)/)![1]);
+  return { cookie: `gs_session=${session}; gs_csrf=${csrf}`, csrf };
+}
+
+test("upload parser accepts a real image over 100kb, rejects oversize bodies, and refuses a pixel bomb before decode", async () => {
+  const { server, db, base } = await start();
+  try {
+    const { cookie, csrf } = await login(base);
+    const created = await fetch(`${base}/api/brands`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Cookie: cookie, "X-CSRF-Token": csrf },
+      body: JSON.stringify({ url: "https://example.com/about" }),
+    });
+    const { brand } = (await created.json()) as { brand: { id: string } };
+    setBrandContext(db, brand.id, context());
+    setApprovedContext(db, brand.id, { logoAssetId: null, colours: ["#112233"], fonts: [], voiceNotes: "" });
+    db.prepare(`UPDATE brands SET status = 'ready' WHERE id = ?`).run(brand.id);
+
+    const image = noisyPng(420, 420);
+    assert.ok(image.length > 100 * 1024, `expected a payload over 100kb, got ${image.length}`);
+    const ok = await fetch(`${base}/api/brands/${brand.id}/check-upload`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Cookie: cookie, "X-CSRF-Token": csrf },
+      body: JSON.stringify({ mimeType: "image/png", imageBase64: image.toString("base64") }),
+    });
+    assert.notEqual(ok.status, 413);
+    assert.equal(ok.status, 200);
+
+    const tight = await fetch(`${base}/api/brands`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Cookie: cookie, "X-CSRF-Token": csrf },
+      body: JSON.stringify({ url: "https://example.com", padding: "x".repeat(120 * 1024) }),
+    });
+    assert.equal(tight.status, 413);
+
+    const tooBig = await fetch(`${base}/api/brands/${brand.id}/check-upload`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Cookie: cookie, "X-CSRF-Token": csrf },
+      body: JSON.stringify({ mimeType: "image/png", imageBase64: "a".repeat(9 * 1024 * 1024) }),
+    });
+    assert.equal(tooBig.status, 413);
+
+    const bomb = await fetch(`${base}/api/brands/${brand.id}/check-upload`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Cookie: cookie, "X-CSRF-Token": csrf },
+      body: JSON.stringify({ mimeType: "image/png", imageBase64: pngHeader(20000, 20000).toString("base64") }),
+    });
+    assert.equal(bomb.status, 400);
+    const bombBody = (await bomb.json()) as { error: string };
+    assert.equal(bombBody.error, "image_too_large");
+  } finally {
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  }
+});
+
+test("the run stores an explicit spelling choice", async () => {
+  const { server, db, base } = await start();
+  try {
+    const { cookie, csrf } = await login(base);
+    const created = await fetch(`${base}/api/brands`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Cookie: cookie, "X-CSRF-Token": csrf },
+      body: JSON.stringify({ url: "https://example.com/colour" }),
+    });
+    const { brand } = (await created.json()) as { brand: { id: string } };
+    setBrandContext(db, brand.id, context());
+    setApprovedContext(db, brand.id, { logoAssetId: null, colours: ["#F4F1EA"], fonts: [], voiceNotes: "" });
+    db.prepare(`UPDATE brands SET status = 'ready' WHERE id = ?`).run(brand.id);
+    const res = await fetch(`${base}/api/brands/${brand.id}/runs`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Cookie: cookie, "X-CSRF-Token": csrf },
+      body: JSON.stringify({ task: "Posts", englishVariant: "us" }),
+    });
+    assert.equal(res.status, 202);
+    const body = (await res.json()) as { run: { id: string }; englishVariant: string };
+    assert.equal(body.englishVariant, "us");
+    assert.equal(getRun(db, body.run.id)?.english_variant, "us");
+    assert.equal(getRun(db, body.run.id)?.mode, "legacy");
+  } finally {
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  }
+});
+
+test("the copy auditor is shown ledger excerpts and not a model fact list", async () => {
+  let prompt = "";
+  await assessCopy(
+    {
+      sourcedFactualCopy: ["SECRET_WHITELIST_SENTENCE"],
+      allowedSourceExcerpts: ["We repair boots in the workshop."],
+      voiceGuidance: "Plain.",
+      text: "We repair boots in the workshop.",
+    },
+    {
+      client: {
+        messages: {
+          parse: async (params) => {
+            prompt = JSON.stringify(params);
+            return {
+              parsed_output: {
+                factsAreAllSourced: true,
+                inventedOrUnsupportedClaims: [],
+                matchesVoiceGuidance: true,
+                voiceMismatchExplanation: "",
+              },
+              usage: { input_tokens: 11, output_tokens: 7 },
+            };
+          },
+        },
+      },
+    }
+  );
+  assert.equal(prompt.includes("SECRET_WHITELIST_SENTENCE"), false);
+  assert.equal(prompt.includes("We repair boots in the workshop."), true);
+});

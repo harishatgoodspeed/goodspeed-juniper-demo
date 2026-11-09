@@ -1,6 +1,7 @@
 import { compareHex, sampleRegionHex } from "./colour";
 import { assessCopy, type CopyAssessmentClient } from "./copy-assessment";
 import { config } from "../config";
+import { unsupportedNumericTokens, verifyCitedClaims, type CitedClaim, type LedgerEntry } from "../ledger";
 import type { Brief, CheckStatus, RenderEvidence, ReviewCheck, ReviewResult } from "../pipeline-types";
 
 export interface ReviewOptions {
@@ -16,6 +17,11 @@ export interface ReviewOptions {
   requireCopyVerified?: boolean;
   /** Injectable for tests, so copy review never needs a real ANTHROPIC_API_KEY to exercise offline. */
   copyAssessmentClient?: CopyAssessmentClient;
+  /** Fetched page excerpts. Facts are checked against this, never against a model written whitelist. */
+  ledger?: LedgerEntry[];
+  claims?: CitedClaim[];
+  /** Called with token usage from the copy auditor, including failed parses that still returned usage. */
+  onUsage?: (usage: { promptTokens: number; completionTokens: number; kind: string }) => void;
 }
 
 export async function reviewOutput(evidence: RenderEvidence, brief: Brief, options: ReviewOptions = {}): Promise<ReviewResult> {
@@ -27,7 +33,8 @@ export async function reviewOutput(evidence: RenderEvidence, brief: Brief, optio
     ...colourChecks(evidence, threshold),
     ...typographyChecks(evidence),
     logoCheck(evidence, brief, logoSimilarityThreshold),
-    await copyCheck(evidence, brief, options.copyAssessmentClient),
+    layoutCheck(evidence),
+    await copyCheck(evidence, brief, options),
   ];
 
   return { checks, overallPass: computeOverallPass(checks, requireCopyVerified) };
@@ -49,6 +56,7 @@ export const DEFAULT_REQUIRE_COPY_VERIFIED = true;
  * re-implementing or drifting from this rule.
  */
 export function computeOverallPass(checks: ReviewCheck[], requireCopyVerified = DEFAULT_REQUIRE_COPY_VERIFIED): boolean {
+  if (checks.length === 0) return false;
   return checks.every((c) => {
     if (c.status === "not_applicable") return true;
     if (c.status === "not_verified" && c.kind === "copy" && !requireCopyVerified) return true;
@@ -228,21 +236,50 @@ function logoCheck(evidence: RenderEvidence, brief: Brief, similarityThreshold: 
   };
 }
 
-async function copyCheck(evidence: RenderEvidence, brief: Brief, client?: CopyAssessmentClient): Promise<ReviewCheck> {
-  if (evidence.outputType !== "post_copy") {
+function layoutCheck(evidence: RenderEvidence): ReviewCheck {
+  if (!evidence.layout) {
+    return {
+      kind: "layout",
+      status: "not_applicable",
+      observed: "n/a",
+      approved: "n/a",
+      explanation: "No layout measurements were recorded for this output. Font and logo checks do not stand in for that.",
+    };
+  }
+  if (evidence.layout.problems.length === 0 && !evidence.overflow) {
+    return {
+      kind: "layout",
+      status: "pass",
+      observed: `contrast ${evidence.layout.contrastRatio.toFixed(2)}, body ${evidence.layout.minBodyPx}px`,
+      approved: "no overflow, no overlap, readable contrast and type size",
+      explanation: "Overflow, overlap, contrast and type size were measured on the rendered page and passed.",
+    };
+  }
+  const problems = [...evidence.layout.problems];
+  if (evidence.overflow && !problems.some((p) => /overflow/i.test(p))) problems.push("The page overflowed its frame.");
+  return {
+    kind: "layout",
+    status: "fail",
+    observed: problems.join(" "),
+    approved: "no overflow, no overlap, readable contrast and type size",
+    explanation: problems.join(" "),
+  };
+}
+
+async function copyCheck(evidence: RenderEvidence, brief: Brief, options: ReviewOptions): Promise<ReviewCheck> {
+  const captured = typeof evidence.text === "string" ? evidence.text : evidence.outputType === "post_copy" ? "" : null;
+  if (captured === null) {
     return {
       kind: "copy",
       status: "not_applicable",
       observed: "n/a",
       approved: "n/a",
-      explanation: "Copy review applies to the post_copy output only.",
+      explanation: "No rendered words were captured for this output, so copy was not checked. This is not a pass.",
     };
   }
 
-  const text = evidence.text ?? "";
+  const text = captured;
 
-  // This one sub-check is real and mechanical (not an LLM judgement), so it
-  // can fail outright without spending an API call — keep it first.
   if (text.includes("!")) {
     return {
       kind: "copy",
@@ -253,15 +290,49 @@ async function copyCheck(evidence: RenderEvidence, brief: Brief, client?: CopyAs
     };
   }
 
+  const ledger = options.ledger ?? [];
+  const ledgerBlob = ledger.map((entry) => entry.excerpt).join("\n");
+  const missingNumbers = unsupportedNumericTokens(text, ledgerBlob);
+  if (missingNumbers.length > 0) {
+    return {
+      kind: "copy",
+      status: "fail",
+      observed: text || "(empty)",
+      approved: "figures must appear in the source ledger",
+      explanation: `Uses ${missingNumbers.join(", ")}, which is not in the source ledger. ${text}`,
+    };
+  }
+  if (options.claims && options.claims.length > 0) {
+    const cited = verifyCitedClaims(options.claims, ledger);
+    if (!cited.ok) {
+      return {
+        kind: "copy",
+        status: "fail",
+        observed: text || "(empty)",
+        approved: "claims must cite a real ledger excerpt",
+        explanation: cited.reason,
+      };
+    }
+  }
+
   const assessment = await assessCopy(
-    { sourcedFactualCopy: brief.sourcedFactualCopy, voiceGuidance: brief.voiceGuidance, text },
-    { client }
+    {
+      allowedSourceExcerpts: ledger.map((entry) => entry.excerpt),
+      voiceGuidance: brief.voiceGuidance,
+      text,
+    },
+    { client: options.copyAssessmentClient }
   );
+  options.onUsage?.({
+    promptTokens: assessment.promptTokens,
+    completionTokens: assessment.completionTokens,
+    kind: "copy_review",
+  });
   return {
     kind: "copy",
     status: assessment.status,
     observed: text || "(empty)",
-    approved: "sourced facts only, voice guidance followed",
+    approved: "source ledger only, voice guidance followed",
     explanation: assessment.explanation,
   };
 }

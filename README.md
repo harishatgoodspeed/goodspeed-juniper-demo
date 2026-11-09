@@ -1,13 +1,11 @@
 # Goodspeed Brand OS — free tool
 
-A public, free tool: paste a URL, approve a brand (palette, fonts, logo,
-voice), and get real on-brand LinkedIn/Instagram/X images plus a post
-caption, checked against your brand before you see them, plus a
-downloadable brand snapshot. No signup, no login, no email gate before
-download. Built on the same pipeline a private prototype used internally:
-import a real site, draft briefs against it, render real assets, review
-them against the brand with a bounded auto-repair loop, and publish a
-shareable, access-controlled result page.
+A public, free tool: paste a URL, confirm the brand we found, and download
+three different posts (a carousel PDF, a saveable image, and a proof led
+post or a text fallback). Each one has a caption, alt text, and checks
+against a source ledger taken from the page, not from the model's own fact
+list. No signup, no login, and no email gate before download. Older runs
+that produced the previous six files stay readable. Nothing here is deployed.
 
 **Status: working end to end, verified live against a real site with a real
 `ANTHROPIC_API_KEY`, not yet deployed.** Every visitor gets an isolated,
@@ -45,7 +43,7 @@ then fails clearly at the brief step, rather than faking a result.
 npm test
 ```
 
-167 tests, entirely offline, running under `node --env-file=.env.test`:
+184 tests pass, and 1 is skipped when no local TTF fixture is present. They run offline under `node --env-file=.env.test`:
 SSRF checks spin up real local HTTP servers to prove loopback/metadata
 addresses are refused; the renderer's tests launch a real headless Chromium
 and assert on real PNG/PDF bytes, real sampled pixel colours, and a real
@@ -61,6 +59,23 @@ run it) — real API usage is exercised manually against a live site, see
 below.
 
 ## The free journey
+
+The default run is three post packages, not six files. Paste a URL, watch the
+real import state (Reading your website, Finding your brand, Preparing your
+ideas), confirm one brand card, then download a carousel PDF, a saveable
+image, and a proof led post or a text fallback. UK or US spelling is an
+explicit choice. The Goodspeed ladder appears only after something is ready,
+and its button goes to https://goodspeed.studio/contact. Prices are not
+invented here. Legacy runs with the older six outputs still open.
+
+Spend caps reserve a placeholder estimate before work is queued and record
+token usage from generation and review, including failures that returned
+usage. Those dollar figures are placeholders, not a provider bill.
+
+Anonymous brands and their files are deleted after `RETENTION_DAYS` (30 by
+default). The server runs that purge when the process starts. Share pages and
+zip manifests do not include email addresses. Rate limits are stored in
+SQLite. The app does not trust `X-Forwarded-For`.
 
 ```
 GET /                          → paste a URL, no account
@@ -314,12 +329,55 @@ Several real bugs were found and fixed along the way, not by `npm test`:
   exposure.
 - **Named CSS colours aren't counted** (e.g. `tomato`) — only hex and
   `rgb()`/`rgba()`.
+- **Meta Ad Library** is optional. Set `META_AD_LIBRARY_TOKEN` to query
+  `graph.facebook.com` `ads_archive`. Without that token the channel is
+  marked Not assessed. The library only covers ads shown in the EU.
+
+## Deploy on Railway
+
+`railway.json` selects the Dockerfile. A Nixpacks or Railpack build will not
+install Chromium or Tesseract, and the audit will fail when it launches a
+browser or reads a screenshot.
+
+The image runs `npx playwright install --with-deps chromium` during the
+build, so the Chromium binary matches the `playwright` version in
+`package.json`. It also installs `tesseract-ocr`. Without Tesseract, a
+screenshot still yields a palette, and the name and tagline stay empty.
+`PLAYWRIGHT_BROWSERS_PATH` is `/root/.cache/ms-playwright`.
+
+Mount a volume and point `DATABASE_PATH` and `ASSET_DIR` at it. SQLite and
+uploaded files are lost on every deploy if they stay on the container disk.
+
+### Environment variables the deploy needs
+
+Required in production (`NODE_ENV=production` refuses to boot without the secret):
+
+| Variable | Purpose |
+| --- | --- |
+| `SESSION_SECRET` | Signs the anonymous session cookie. Generate 32 random bytes as hex. |
+| `NODE_ENV` | Set to `production`. |
+| `APP_BASE_URL` | Public `https` origin of this service. |
+| `DATABASE_PATH` | SQLite file on the volume, for example `/data/app.db`. |
+| `ASSET_DIR` | File storage on the volume, for example `/data/assets`. |
+
+`PORT` is injected by Railway. Do not set it unless you are running outside Railway.
+
+Optional:
+
+| Variable | Purpose |
+| --- | --- |
+| `META_AD_LIBRARY_TOKEN` | Official Meta Ad Library token (`ads_archive`). When unset, that channel is marked Not assessed. The library only covers ads shown in the EU. |
+| `ANTHROPIC_API_KEY` | Brief generation and copy review. The brand audit does not call it. |
+| `ANTHROPIC_MODEL` | Defaults to `claude-sonnet-5-5`. |
+| `SLACK_WEBHOOK_URL` | Lead notification. No-op when unset. |
+
+Everything else in `.env.example` has a default in `src/config.ts`.
 
 ## Environment variables
 
 See `.env.example` for the full list with descriptions. All of `PORT`,
 `NODE_ENV`, `APP_BASE_URL`, `DATABASE_PATH`, `ASSET_DIR`, `SESSION_SECRET`,
-`ANTHROPIC_API_KEY`, `ANTHROPIC_MODEL`, `MAX_CONCURRENT_JOBS`,
+`ANTHROPIC_API_KEY`, `ANTHROPIC_MODEL`, `META_AD_LIBRARY_TOKEN`, `MAX_CONCURRENT_JOBS`,
 `DAILY_RUN_LIMIT`, `MAX_RUN_TOKENS`, `COLOUR_DELTA_E_THRESHOLD`,
 `LOGO_SIMILARITY_THRESHOLD`, `UPLOAD_COLOUR_MATCH_THRESHOLD`,
 `RETENTION_DAYS`, `PER_VISITOR_DAILY_SPEND_USD`, `GLOBAL_DAILY_SPEND_USD`,
