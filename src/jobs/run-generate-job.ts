@@ -13,9 +13,8 @@ import type { Brief, RenderEvidence } from "../pipeline-types";
 import type { BrandContext } from "../import/types";
 import type { ApprovedBrandContext } from "../llm";
 import { approvedImagePaths } from "../imagery";
-import { runPostsGenerateJob, type PostsJobDeps } from "./run-posts-job";
 
-export interface RunGenerateJobDeps extends PostsJobDeps {
+export interface RunGenerateJobDeps {
   /** Injectable for tests, so this never needs a real Chromium install to be exercised offline. */
   render?: (brief: Brief, assets: RenderAssets, outDir: string) => Promise<RenderEvidence>;
   /** Injectable for tests, so this never needs real network access to Google Fonts / the brand's own site. */
@@ -40,10 +39,6 @@ export async function runGenerateJob(db: Database.Database, job: JobRow, deps: R
   if (!job.run_id) throw new Error("Generate job has no run_id");
   const run = getRun(db, job.run_id);
   if (!run) throw new Error(`Run ${job.run_id} not found`);
-  if ((run.mode ?? "legacy") === "posts") {
-    await runPostsGenerateJob(db, job, deps);
-    return;
-  }
   if (!run.briefs_json) throw new Error(`Run ${run.id} has no briefs yet`);
 
   const brand = getBrand(db, run.brand_id);
