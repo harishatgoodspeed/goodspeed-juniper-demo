@@ -38,6 +38,7 @@ import { createShare, getShare, listActiveSharesForBrand, revokeShare } from "./
 import { canAccessBrand, isOwner } from "./security/brand-access";
 import { renderSharePage } from "./share-page";
 import { buildBrandMarkdown } from "./snapshot";
+import { registerAuditPdfRoutes } from "./audit/pdf-route";
 import { checkUploadAgainstBrand, UploadDecodeError } from "./review/upload-check";
 import { createLead } from "./leads";
 import { notifySlack } from "./slack";
@@ -815,10 +816,13 @@ export function createApp(options?: { auditDeps?: AuditDeps }) {
     });
   });
 
+  // Audit PDF. Scoring lives in the audit routes above.
+  registerAuditPdfRoutes(app, db);
+
   // --- Own frontend (public/) ---
   const publicDir = path.join(__dirname, "..", "public");
   app.get("/", (req, res) => serveStaticFile(publicDir, "index.html", req, res));
-  app.get(/^\/(app\.js|styles\.css|audit-mock\.js|bent-pixels-wordmark\.png)$/, (req, res) =>
+  app.get(/^\/(app\.js|styles\.css|bent-pixels-wordmark\.png)$/, (req, res) =>
     serveStaticFile(publicDir, req.path.slice(1), req, res)
   );
 
