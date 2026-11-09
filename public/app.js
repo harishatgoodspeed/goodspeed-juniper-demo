@@ -1,111 +1,186 @@
 (function () {
-  const views = ["urlView", "progressView", "confirmView", "resultsView", "editorView"];
-  const stepFor = { urlView: "url", progressView: "read", confirmView: "brand", resultsView: "posts", editorView: "posts" };
-  let brandId = null;
-  let runId = null;
-  let brandData = null;
-  let runData = null;
-  let selectedLogo = null;
-  let selectedColours = [];
-  let selectedFonts = [];
-  let editingPostId = null;
+  var TOOLS = ["Canva", "Figma", "Google Slides", "Gamma", "PowerPoint", "Notion", "Other"];
+  var FORMATS = ["LinkedIn posts", "Decks", "One-pagers", "Blog images", "Ads", "Other"];
+  var VIEWS = ["urlView", "readingView", "profileView", "channelsView", "toolsView", "auditView", "resultsView"];
+  var STAGE = {
+    urlView: "brand", readingView: "brand", profileView: "brand",
+    channelsView: "channels", toolsView: "tools", auditView: "audit", resultsView: "audit",
+  };
+  var STATUS = { ok: "Sound", warn: "Weak", break: "Breaking" };
+  var SURFACE = { site: "Site", blog: "Blog", linkedin: "LinkedIn", deck: "Deck", x: "X", instagram: "Instagram", youtube: "YouTube", meta: "Meta ads" };
+  var shots = {};
+
+  var brandId = null;
+  var brandData = null;
+  var confirmed = null;
+  var channels = [];
+  var toolStep = "tools";
+  var pickedTools = [];
+  var pickedFormats = [];
+  var auditResult = null;
+  var auditTimer = null;
 
   function $(id) { return document.getElementById(id); }
   function show(id) {
-    views.forEach((view) => { $(view).hidden = view !== id; });
-    document.querySelectorAll(".steps li").forEach((li) => {
-      li.setAttribute("aria-current", li.dataset.step === stepFor[id] ? "step" : "false");
+    VIEWS.forEach(function (view) { $(view).hidden = view !== id; });
+    var stage = STAGE[id];
+    var order = ["brand", "channels", "tools", "audit"];
+    var active = order.indexOf(stage);
+    document.querySelectorAll("#stageBar li").forEach(function (li, index) {
+      li.dataset.state = index < active ? "done" : index === active ? "active" : "waiting";
     });
-    const heading = $(id).querySelector("h1");
+    var heading = $(id).querySelector("h1");
     if (heading) heading.focus();
   }
   function csrf() {
-    const match = document.cookie.match(/(?:^|; )gs_csrf=([^;]+)/);
+    var match = document.cookie.match(/(?:^|; )gs_csrf=([^;]+)/);
     return match ? decodeURIComponent(match[1]) : "";
   }
-  async function api(path, options = {}) {
-    const headers = Object.assign({ Accept: "application/json" }, options.headers || {});
-    if (options.body) headers["Content-Type"] = "application/json";
-    if (options.method && options.method !== "GET") headers["X-CSRF-Token"] = csrf();
-    const res = await fetch(path, Object.assign({}, options, { headers, credentials: "same-origin" }));
-    const text = await res.text();
-    const data = text ? JSON.parse(text) : null;
+  async function api(path, options) {
+    var opts = options || {};
+    var headers = Object.assign({ Accept: "application/json" }, opts.headers || {});
+    if (opts.body) headers["Content-Type"] = "application/json";
+    if (opts.method && opts.method !== "GET") headers["X-CSRF-Token"] = csrf();
+    var res = await fetch(path, Object.assign({}, opts, { headers: headers, credentials: "same-origin" }));
+    var text = await res.text();
+    var data = null;
+    try { data = text ? JSON.parse(text) : null; } catch (err) { data = null; }
     if (!res.ok) {
-      const message = (data && data.message) || "Something went wrong. Please try again.";
-      const error = new Error(message);
+      var error = new Error((data && data.message) || "Something went wrong. Please try again.");
       error.status = res.status;
-      error.code = data && data.error;
       throw error;
     }
     return data;
   }
   function el(tag, props, children) {
-    const node = document.createElement(tag);
-    Object.entries(props || {}).forEach(([key, value]) => {
+    var node = document.createElement(tag);
+    Object.entries(props || {}).forEach(function (entry) {
+      var key = entry[0];
+      var value = entry[1];
       if (key === "text") node.textContent = value;
       else if (key === "class") node.className = value;
-      else if (key.startsWith("on") && typeof value === "function") node.addEventListener(key.slice(2), value);
-      else if (value !== null && value !== undefined) node.setAttribute(key, value);
+      else if (value !== null && value !== undefined) node.setAttribute(key, String(value));
     });
-    (children || []).forEach((child) => node.appendChild(child));
+    (children || []).forEach(function (child) {
+      if (child) node.appendChild(child);
+    });
     return node;
   }
-  function progressCopy(progress, phase) {
-    if (phase === "brief" || phase === "generate" || progress === "preparing_ideas") return "Preparing your ideas";
-    if (progress === "finding_brand") return "Finding your brand";
-    return "Reading your website";
+  function sleep(ms) { return new Promise(function (resolve) { setTimeout(resolve, ms); }); }
+  function normaliseHex(value) {
+    var hex = String(value || "").trim().replace(/^#/, "");
+    if (/^[0-9a-fA-F]{3}$/.test(hex)) hex = hex.split("").map(function (ch) { return ch + ch; }).join("");
+    if (!/^[0-9a-fA-F]{6}$/.test(hex)) return null;
+    return "#" + hex.toLowerCase();
+  }
+  function notAssessed(check) {
+    var findings = (check && check.findings) || [];
+    return findings.length > 0 && findings.every(function (item) {
+      return String(item.detail || "").indexOf("Not assessed") === 0;
+    });
+  }
+  function badgeFor(check) {
+    if (notAssessed(check)) return el("span", { class: "badge na", text: "Not assessed" });
+    return el("span", { class: "badge " + check.status, text: STATUS[check.status] || check.status });
+  }
+  function isAuditResult(value) {
+    return Boolean(value && value.brand && typeof value.brand.name === "string" && Array.isArray(value.checks) && value.toolsAndFormats && Array.isArray(value.toolsAndFormats.requested));
+  }
+  function setChip(host, state, step) {
+    $("statusChip").hidden = !host;
+    $("chipHost").textContent = host || "";
+    $("chipState").textContent = state || "";
+    $("chipStep").textContent = step || "";
+  }
+  function hostOf(url) {
+    try { return new URL(url).hostname.replace(/^www\./, ""); } catch (err) { return url || ""; }
   }
 
-  async function pollJob(jobId, onTick) {
-    for (;;) {
-      const job = await api("/api/jobs/" + jobId);
-      onTick(job);
-      if (job.status === "succeeded" || job.status === "failed") return job;
-      await new Promise((resolve) => setTimeout(resolve, 1200));
-    }
+  function renderSample(result) {
+    var body = $("sampleBody");
+    body.innerHTML = "";
+    var score = Math.round(Number(result.overallScore) || 0);
+    body.appendChild(el("p", { class: "score-num", text: String(score) }));
+    body.appendChild(el("p", { class: "quiet", text: result.brand.name + " example, " + score + " out of 100" }));
+    var breaks = (result.topBreaks || []).slice(0, 2);
+    breaks.forEach(function (item) {
+      body.appendChild(el("p", { text: item.rank + ". " + item.title + ". " + item.whyItMatters }));
+    });
+    var row = el("div", { class: "chip-row" });
+    (result.checks || []).forEach(function (check) {
+      row.appendChild(badgeFor(check));
+    });
+    body.appendChild(row);
   }
 
-  $("importForm").addEventListener("submit", async (event) => {
+  $("importForm").addEventListener("submit", async function (event) {
     event.preventDefault();
     $("importError").hidden = true;
-    const url = $("siteUrl").value.trim();
+    var url = $("siteUrl").value.trim();
     try {
-      const started = await api("/api/brands", { method: "POST", body: JSON.stringify({ url }) });
+      var started = await api("/api/brands", { method: "POST", body: JSON.stringify({ url: url }) });
       brandId = started.brand.id;
-      show("progressView");
-      $("blockedBox").hidden = true;
-      $("progressText").textContent = "Reading your website";
-      const job = await pollJob(started.jobId, (current) => {
-        $("progressText").textContent = progressCopy(current.progress, current.phase);
+      setChip(hostOf(url), "Reading", "step 1 of 3");
+      show("readingView");
+      paintRead(1, "Reading the public page.");
+      var job = await pollJob(started.jobId, function (current) {
+        var finding = current.progress === "finding_brand";
+        setChip(hostOf(url), finding ? "Finding your brand" : "Reading", finding ? "step 2 of 3" : "step 1 of 3");
+        paintRead(finding ? 2 : 1, finding ? "Finding colours, type, and channels." : "Reading the public page.");
       });
       if (job.status === "failed") return showBlocked();
       await openBrand();
     } catch (err) {
       $("importError").hidden = false;
       $("importError").textContent = err.message;
+      show("urlView");
     }
   });
 
-  async function showBlocked() {
-    const data = await api("/api/brands/" + brandId);
-    $("blockedBox").hidden = false;
-    $("blockedText").textContent = data.error || "We could not read that address. Try again, correct the URL, or enter a short description.";
-    $("progressText").textContent = "The import stopped";
+  function paintRead(step, status) {
+    $("readCount").textContent = step + " of 3";
+    $("readStatus").textContent = status;
+    var bar = $("readBar");
+    bar.innerHTML = "";
+    for (var i = 1; i <= 3; i++) bar.appendChild(el("i", { class: i <= step ? "on" : "" }));
   }
 
-  $("retryImport").addEventListener("click", () => $("importForm").requestSubmit());
-  $("correctUrl").addEventListener("click", () => { show("urlView"); $("siteUrl").focus(); });
+  async function pollJob(jobId, onTick) {
+    for (;;) {
+      var job = await api("/api/jobs/" + jobId);
+      onTick(job);
+      if (job.status === "succeeded" || job.status === "failed") return job;
+      await sleep(1000);
+    }
+  }
 
-  $("manualForm").addEventListener("submit", async (event) => {
+  async function showBlocked() {
+    var data = await api("/api/brands/" + brandId);
+    $("blockedBox").hidden = false;
+    $("blockedText").textContent = data.error || "We could not read that address.";
+    $("readStatus").textContent = "The import stopped";
+  }
+
+  $("retryImport").addEventListener("click", function () { $("importForm").requestSubmit(); });
+  $("correctUrl").addEventListener("click", function () { show("urlView"); $("siteUrl").focus(); });
+  $("showExample").addEventListener("click", function () {
+    $("sampleCard").hidden = !$("sampleCard").hidden;
+  });
+  $("chipChange").addEventListener("click", function () { show("urlView"); });
+  $("chipDetails").addEventListener("click", function () {
+    $("chipDetail").hidden = !$("chipDetail").hidden;
+    $("chipDetail").textContent = $("chipState").textContent;
+  });
+
+  $("manualForm").addEventListener("submit", async function (event) {
     event.preventDefault();
     $("manualError").hidden = true;
     try {
-      const created = await api("/api/brands/manual", {
+      var created = await api("/api/brands/manual", {
         method: "POST",
         body: JSON.stringify({
           name: $("manualName").value.trim(),
           offer: $("manualOffer").value.trim(),
-          audience: $("manualAudience").value.trim(),
           url: $("siteUrl").value.trim(),
         }),
       });
@@ -117,379 +192,538 @@
     }
   });
 
-  async function openBrand(reveal = true) {
+  async function openBrand() {
     brandData = await api("/api/brands/" + brandId);
-    const context = brandData.context || {};
-    selectedLogo = (context.logoCandidates && context.logoCandidates[0] && brandData.assets.find((asset) => asset.kind === "logo")) || null;
-    selectedColours = (context.colours || []).slice(0, 4).map((colour) => colour.hex);
-    selectedFonts = (context.fonts || []).slice(0, 2).map((font) => font.family);
-    const logoAsset = brandData.assets.find((asset) => asset.kind === "logo" || asset.kind === "favicon");
-    selectedLogo = logoAsset ? logoAsset.id : null;
-    renderBrandCard(context, logoAsset);
-    const uk = brandData.englishSuggestion !== "us";
-    document.querySelectorAll('input[name="english"]').forEach((input) => { input.checked = input.value === (uk ? "uk" : "us"); });
-    $("englishHint").textContent = brandData.englishSuggestionSource === "site_spelling"
-      ? "Prefilled from the spelling on the site. You can change it."
-      : "No clear spelling signal. Prefilled as British English. You can change it.";
-    $("languageGate").hidden = brandData.siteLanguage !== "other";
-    $("snapshotLink").href = "/api/brands/" + brandId + "/snapshot.md";
-    if (reveal) show("confirmView");
-  }
-
-  function renderBrandCard(context, logoAsset) {
-    const card = $("brandCard");
-    card.innerHTML = "";
-    if (logoAsset) card.appendChild(el("img", { class: "logo-slot", src: "/api/assets/" + logoAsset.id, alt: "Logo from the site" }));
-    else card.appendChild(el("p", { class: "hint", text: "Logo: unknown" }));
-    const swatches = el("div", { class: "swatches" });
-    if (selectedColours.length === 0) swatches.appendChild(el("p", { class: "hint", text: "Colours: unknown" }));
-    selectedColours.forEach((hex) => swatches.appendChild(el("div", { class: "swatch", style: "background:" + hex, title: hex })));
-    card.appendChild(swatches);
-    card.appendChild(el("p", { class: "font-sample", text: selectedFonts[0] || "Font: unknown", style: selectedFonts[0] ? "font-family:" + selectedFonts[0] : "" }));
-    card.appendChild(el("p", { text: context.description || "Business summary: unknown" }));
-    card.appendChild(el("p", { class: "hint", text: "Audience: unknown until you add one. We will infer a useful reader from the site when we write." }));
-    card.appendChild(el("p", { class: "hint", text: context.textExcerpt ? context.textExcerpt.slice(0, 280) : "No readable copy was found." }));
-  }
-
-  $("backToUrl").addEventListener("click", () => show("urlView"));
-
-  $("ownedForm").addEventListener("submit", async (event) => {
-    event.preventDefault();
-    const file = $("ownedFile").files && $("ownedFile").files[0];
-    if (!file) return;
-    if (!$("ownConfirm").checked) {
-      $("ownedStatus").textContent = "Tick the box to confirm you own the image.";
-      return;
-    }
-    const dataUrl = await new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onload = () => resolve(String(reader.result || ""));
-      reader.onerror = () => reject(new Error("Could not read that file."));
-      reader.readAsDataURL(file);
-    });
-    const base64 = dataUrl.slice(dataUrl.indexOf(",") + 1);
-    try {
-      await api("/api/brands/" + brandId + "/owned-images", {
-        method: "POST",
-        body: JSON.stringify({ mimeType: file.type, imageBase64: base64, ownershipConfirmed: true }),
+    var context = brandData.context || {};
+    setChip(hostOf(brandData.sourceUrl || ""), "Ready", "");
+    paintRead(3, "Profile ready.");
+    $("readLook").innerHTML = "";
+    var colours = (context.colours || []).slice(0, 6);
+    if (colours.length) {
+      var row = el("div", { class: "swatches" });
+      colours.forEach(function (colour) {
+        row.appendChild(el("span", { class: "swatch", style: "background:" + colour.hex, title: colour.hex }));
       });
-      $("ownedStatus").textContent = "Image added. It will only be used because you confirmed you own it.";
-    } catch (err) {
-      $("ownedStatus").textContent = err.message;
-    }
-  });
+      $("readLook").appendChild(row);
+    } else $("readLook").textContent = "No colours were found.";
+    $("readVoice").textContent = context.description || context.textExcerpt || "No readable copy was found.";
+    channels = (context.channels || []).map(function (channel) {
+      return { kind: channel.kind, url: channel.url, name: channel.name, kept: true };
+    });
+    $("readChannels").textContent = channels.length
+      ? channels.map(function (channel) { return channel.name; }).join(", ")
+      : "No public channel links were found.";
+    renderProfile();
+    show("profileView");
+  }
 
-  $("approveBtn").addEventListener("click", async () => {
+  function logoAsset() {
+    var assets = (brandData && brandData.assets) || [];
+    return assets.find(function (asset) { return asset.kind === "logo"; })
+      || assets.find(function (asset) { return asset.kind === "favicon"; })
+      || null;
+  }
+
+  function renderProfile() {
+    var context = brandData.context || {};
+    var grid = $("profileGrid");
+    grid.innerHTML = "";
+    var logo = logoAsset();
+    var brandCard = el("article", { class: "info-card" });
+    brandCard.appendChild(el("header", {}, [el("h2", { text: "Brand" }), el("button", { class: "text-btn", type: "button", text: "Edit", id: "editName" })]));
+    if (logo) brandCard.appendChild(el("img", { class: "logo", src: "/api/assets/" + logo.id, alt: "Logo from the site" }));
+    else brandCard.appendChild(el("p", { class: "quiet", text: "Logo: unknown" }));
+    brandCard.appendChild(el("input", { id: "brandName", type: "text", value: shortName(context.siteName || context.title || "") }));
+    brandCard.appendChild(el("p", { class: "quiet", text: brandData.sourceUrl || "" }));
+    var swatches = el("div", { class: "swatches", id: "colourFields" });
+    (context.colours || []).slice(0, 8).forEach(function (colour) {
+      swatches.appendChild(el("span", { class: "swatch", style: "background:" + colour.hex, title: colour.hex }));
+    });
+    if (!context.colours || !context.colours.length) swatches.appendChild(el("p", { class: "quiet", text: "Colours: unknown" }));
+    brandCard.appendChild(swatches);
+    grid.appendChild(brandCard);
+
+    var voiceCard = el("article", { class: "info-card" });
+    voiceCard.appendChild(el("header", {}, [el("h2", { text: "Voice" })]));
+    voiceCard.appendChild(el("p", { text: context.description || "No description was found on the site." }));
+    voiceCard.appendChild(el("textarea", { id: "voiceNotes", rows: "4", placeholder: "How you should sound. Leave this blank if you are not sure." }));
+    grid.appendChild(voiceCard);
+
+    var typeCard = el("article", { class: "info-card" });
+    typeCard.appendChild(el("header", {}, [el("h2", { text: "Type" })]));
+    var fonts = [];
+    (context.fonts || []).forEach(function (font) {
+      if (!font.family || /placeholder$/i.test(font.family) || fonts.indexOf(font.family) !== -1) return;
+      fonts.push(font.family);
+    });
+    typeCard.appendChild(el("p", { id: "fontList", text: fonts.slice(0, 6).join(", ") || "Fonts: unknown" }));
+    typeCard.dataset.fonts = fonts.slice(0, 6).join("|");
+    grid.appendChild(typeCard);
+    $("profileTitle").textContent = "Here's " + ($("brandName").value || "the brand") + ", as we read it.";
+  }
+
+  function shortName(value) {
+    var text = String(value || "").trim();
+    var pipe = text.split(" | ")[0].trim();
+    return pipe || text;
+  }
+
+  $("backToUrl").addEventListener("click", function () { show("urlView"); });
+  $("useBrand").addEventListener("click", async function () {
     $("approveError").hidden = true;
-    if (brandData && brandData.siteLanguage === "other" && !$("confirmEnglish").checked) {
+    var name = $("brandName").value.trim();
+    if (!name) {
       $("approveError").hidden = false;
-      $("approveError").textContent = "This site does not look like English. Tick the box if you still want English posts.";
+      $("approveError").textContent = "Add a business name before you continue.";
       return;
     }
-    const englishVariant = document.querySelector('input[name="english"]:checked').value;
-    const channel = document.querySelector('input[name="channel"]:checked').value;
-    const task = $("runTask").value.trim() || "Three useful posts from this website";
+    var colours = [];
+    document.querySelectorAll("#colourFields .swatch").forEach(function (node) {
+      var hex = normaliseHex(node.getAttribute("title") || "");
+      if (hex) colours.push(hex);
+    });
+    var fontNode = document.getElementById("fontList");
+    var fonts = fontNode && fontNode.parentElement.dataset.fonts
+      ? fontNode.parentElement.dataset.fonts.split("|").filter(Boolean)
+      : [];
+    var logo = logoAsset();
     try {
       await api("/api/brands/" + brandId, {
         method: "PATCH",
         body: JSON.stringify({
           approvedContext: {
-            logoAssetId: selectedLogo,
-            colours: selectedColours,
-            fonts: selectedFonts,
+            logoAssetId: logo ? logo.id : null,
+            colours: colours,
+            fonts: fonts,
             voiceNotes: $("voiceNotes").value.trim(),
-            englishVariant,
-            approvedImageAssetIds: (brandData.approvedContext && brandData.approvedContext.approvedImageAssetIds) || [],
+            approvedImageAssetIds: [],
+            englishVariant: "uk",
           },
         }),
       });
-      brandData = await api("/api/brands/" + brandId);
-      const imageIds = (await api("/api/brands/" + brandId + "/owned-images")).images.map((image) => image.id);
-      if (imageIds.length) {
-        await api("/api/brands/" + brandId, {
-          method: "PATCH",
-          body: JSON.stringify({
-            approvedContext: Object.assign({}, brandData.approvedContext, { approvedImageAssetIds: imageIds, englishVariant }),
-          }),
-        });
-      }
-      const started = await api("/api/brands/" + brandId + "/runs", {
-        method: "POST",
-        body: JSON.stringify({
-          task,
-          englishVariant,
-          channel,
-          confirmEnglish: $("confirmEnglish").checked,
-        }),
-      });
-      runId = started.run.id;
-      show("resultsView");
-      $("ladder").hidden = true;
-      $("keepBar").hidden = true;
-      await pollRun();
+      var context = brandData.context || {};
+      confirmed = {
+        name: name,
+        siteUrl: brandData.sourceUrl,
+        logoUrl: logo ? "/api/assets/" + logo.id : undefined,
+        palette: colours,
+        fonts: fonts,
+        voiceSummary: $("voiceNotes").value.trim() || context.description || "",
+      };
+      $("snapshotLink").href = "/api/brands/" + brandId + "/snapshot.md";
+      renderChannels();
+      show("channelsView");
     } catch (err) {
       $("approveError").hidden = false;
       $("approveError").textContent = err.message;
     }
   });
 
-  async function pollRun() {
-    for (;;) {
-      runData = await api("/api/runs/" + runId);
-      renderPosts();
-      if (["completed", "partial", "failed"].includes(runData.status)) return;
-      await new Promise((resolve) => setTimeout(resolve, 1500));
-    }
-  }
-
-  function badge(label) {
-    const kind = label === "Checks passed" ? "ok" : label === "Needs review" ? "fail" : "draft";
-    return el("span", { class: "badge " + kind, text: label });
-  }
-
-  function renderPosts() {
-    const copy = {
-      queued: "Preparing your ideas",
-      briefing: "Preparing your ideas",
-      generating: "Preparing your ideas",
-      reviewing: "Preparing your ideas",
-      completed: "Three posts are ready to keep.",
-      partial: "Some posts are ready. Any that failed stay here so you can retry them.",
-      failed: "The run stopped before the posts were ready.",
-    };
-    $("runStatusText").textContent = copy[runData.status] || runData.status;
-    const grid = $("postGrid");
+  function renderChannels() {
+    var grid = $("channelGrid");
     grid.innerHTML = "";
-    const posts = runData.posts || [];
-    if (posts.length === 0 && !["completed", "partial", "failed"].includes(runData.status)) {
-      grid.appendChild(el("p", { class: "hint", text: "Preparing your ideas" }));
+    if (!channels.length) {
+      grid.appendChild(el("p", { text: "No public LinkedIn, X, Instagram, YouTube, or blog links were found on the site." }));
+      return;
     }
-    posts.forEach((post) => grid.appendChild(postCard(post)));
-    const anyReady = posts.some((post) => post.status === "ready");
-    $("keepBar").hidden = !anyReady;
-    $("ladder").hidden = !anyReady;
-    $("snapshotLink").href = "/api/brands/" + brandId + "/snapshot.md";
+    channels.forEach(function (channel, index) {
+      var card = el("article", { class: "pick" + (channel.kept ? " on" : ""), "data-index": String(index) });
+      card.appendChild(el("span", { class: "num", text: String(index + 1) }));
+      card.appendChild(el("span", { class: "icon-tile", text: SURFACE[channel.kind] || channel.kind }));
+      card.appendChild(el("h2", { text: channel.name }));
+      card.appendChild(el("p", { class: "domain", text: hostOf(channel.url) }));
+      var row = el("div", { class: "row" });
+      var keep = el("button", { type: "button", class: "text-btn", text: channel.kept ? "Keeping" : "Dropped" });
+      var drop = el("button", { type: "button", class: "text-btn", text: "Drop" });
+      keep.addEventListener("click", function () { channel.kept = true; renderChannels(); });
+      drop.addEventListener("click", function () { channel.kept = false; renderChannels(); });
+      row.appendChild(keep);
+      row.appendChild(drop);
+      card.appendChild(row);
+      if (channel.kind === "linkedin" || channel.kind === "x" || channel.kind === "instagram") {
+        var file = el("input", { type: "file", accept: "image/png,image/jpeg,image/webp", "aria-label": "Screenshot of " + channel.kind });
+        file.addEventListener("change", function () {
+          var chosen = file.files && file.files[0];
+          if (!chosen) return;
+          var reader = new FileReader();
+          reader.onload = function () {
+            var dataUrl = String(reader.result || "");
+            shots[channel.kind] = {
+              kind: channel.kind,
+              mimeType: chosen.type || "image/png",
+              filename: chosen.name,
+              base64: dataUrl.slice(dataUrl.indexOf(",") + 1),
+            };
+          };
+          reader.readAsDataURL(chosen);
+        });
+        card.appendChild(el("p", { class: "quiet", text: shots[channel.kind] ? "Screenshot added. From your screenshot." : "Add a screenshot if the public page is blocked." }));
+        card.appendChild(file);
+      }
+      grid.appendChild(card);
+    });
   }
 
-  function postCard(post) {
-    const card = el("article", { class: "post-card" });
-    card.appendChild(el("div", { class: "row" }, [
-      el("strong", { text: post.formatFamily === "carousel" ? "Carousel" : post.formatFamily === "explainer" ? "Saveable image" : "Proof led post" }),
-      badge(post.label),
-    ]));
-    const preview = post.assets && post.assets.find((asset) => asset.kind === "png" || asset.kind === "page_png" || asset.kind === "x_png");
-    if (preview) card.appendChild(el("img", { src: "/api/post-assets/" + preview.id, alt: post.altText || post.title }));
-    else if (post.status === "failed") card.appendChild(el("p", { class: "hint", text: post.error || "This post did not render." }));
-    else if (post.status !== "ready") card.appendChild(el("p", { class: "hint", text: "Still working on this one." }));
-    if (post.formatFamily === "carousel") card.appendChild(el("p", { class: "pages", text: (post.pageCount || 0) + " pages" }));
-    card.appendChild(el("p", { class: "hint", text: post.formatNote || "Evergreen format" }));
-    card.appendChild(el("p", { class: "caption", text: post.caption || "" }));
-    const details = el("details", { class: "checks" });
-    details.appendChild(el("summary", { text: "Sources and checks" }));
-    details.appendChild(el("p", { text: post.labelNote }));
-    (post.checks || []).forEach((check) => {
-      details.appendChild(el("p", { text: check.kind + ": " + check.status + ". " + check.explanation }));
+  document.addEventListener("keydown", function (event) {
+    if (!$("channelsView") || $("channelsView").hidden) return;
+    if (event.target && /input|textarea/i.test(event.target.tagName)) return;
+    var n = Number(event.key);
+    if (!n || !channels[n - 1]) return;
+    channels[n - 1].kept = !channels[n - 1].kept;
+    renderChannels();
+  });
+
+  $("backToProfile").addEventListener("click", function () { show("profileView"); });
+  $("keepChannels").addEventListener("click", function () {
+    if ($("linkedinText").value.trim().length > 12000) {
+      $("channelsError").hidden = false;
+      $("channelsError").textContent = "Paste a shorter LinkedIn excerpt. A few posts is enough.";
+      return;
+    }
+    $("channelsError").hidden = true;
+    toolStep = "tools";
+    renderToolStep();
+    show("toolsView");
+  });
+
+  function renderToolStep() {
+    var names = toolStep === "tools" ? TOOLS : FORMATS;
+    var selected = toolStep === "tools" ? pickedTools : pickedFormats;
+    $("toolCount").textContent = toolStep === "tools" ? "1 of 2" : "2 of 2";
+    $("toolTitle").textContent = toolStep === "tools" ? "Which tools do you use?" : "Which formats do you ship?";
+    $("toolSub").textContent = "Pick at least one. You can also type a number.";
+    var grid = $("choiceGrid");
+    grid.innerHTML = "";
+    names.forEach(function (name, index) {
+      var on = selected.indexOf(name) !== -1;
+      var chip = el("button", { type: "button", class: "choice" + (on ? " on" : ""), "data-name": name });
+      chip.appendChild(document.createTextNode(name));
+      chip.appendChild(el("span", { class: "num", text: String(index + 1) }));
+      chip.addEventListener("click", function () { toggleChoice(name); });
+      grid.appendChild(chip);
     });
-    card.appendChild(details);
-    const row = el("div", { class: "row" });
-    if (post.status === "ready") {
-      row.appendChild(el("a", { class: "btn btn-ghost", href: "/api/posts/" + post.id + "/package.zip", text: "Download" }));
-      row.appendChild(el("button", { class: "btn btn-primary", type: "button", text: "Open", onclick: () => openEditor(post.id) }));
+    var otherOn = selected.indexOf("Other") !== -1;
+    $("otherWrap").hidden = !otherOn;
+  }
+
+  function toggleChoice(name) {
+    var list = toolStep === "tools" ? pickedTools : pickedFormats;
+    var at = list.indexOf(name);
+    if (at === -1) list.push(name);
+    else list.splice(at, 1);
+    renderToolStep();
+  }
+
+  document.addEventListener("keydown", function (event) {
+    if ($("toolsView").hidden) return;
+    if (event.target && /input|textarea/i.test(event.target.tagName)) return;
+    var n = Number(event.key);
+    var names = toolStep === "tools" ? TOOLS : FORMATS;
+    if (!n || !names[n - 1]) return;
+    toggleChoice(names[n - 1]);
+  });
+
+  $("toolBack").addEventListener("click", function () {
+    if (toolStep === "formats") {
+      toolStep = "tools";
+      renderToolStep();
+      return;
     }
-    if (post.status === "failed") {
-      row.appendChild(el("button", { class: "btn btn-ghost", type: "button", text: "Retry", onclick: () => retryPost(post.id) }));
+    show("channelsView");
+  });
+
+  $("toolNext").addEventListener("click", async function () {
+    $("toolsError").hidden = true;
+    $("rateNote").hidden = true;
+    var list = toolStep === "tools" ? pickedTools : pickedFormats;
+    var other = $("otherText").value.trim();
+    if (list.indexOf("Other") !== -1 && toolStep === "formats" && !other) {
+      $("toolsError").hidden = false;
+      $("toolsError").textContent = "Name the other format.";
+      return;
     }
-    card.appendChild(row);
+    if (toolStep === "tools" && list.indexOf("Other") !== -1 && !other) {
+      $("toolsError").hidden = false;
+      $("toolsError").textContent = "Name the other tool.";
+      return;
+    }
+    var cleaned = list.filter(function (name) { return name !== "Other"; });
+    if (list.indexOf("Other") !== -1 && other) cleaned.push(other);
+    if (!cleaned.length) {
+      $("toolsError").hidden = false;
+      $("toolsError").textContent = toolStep === "tools" ? "Pick at least one tool." : "Pick at least one format.";
+      return;
+    }
+    if (toolStep === "tools") {
+      pickedTools = cleaned;
+      toolStep = "formats";
+      $("otherText").value = "";
+      renderToolStep();
+      return;
+    }
+    pickedFormats = cleaned;
+    await runAudit();
+  });
+
+  async function runAudit() {
+    var body = {
+      siteUrl: confirmed.siteUrl,
+      tools: pickedTools,
+      formats: pickedFormats,
+      channels: channels.filter(function (channel) { return channel.kept; }).map(function (channel) {
+        return { kind: channel.kind, url: channel.url };
+      }),
+    };
+    var blog = body.channels.filter(function (channel) { return channel.kind === "blog"; })[0];
+    if (blog) body.blogUrl = blog.url;
+    var linkedin = $("linkedinText").value.trim();
+    if (linkedin) body.linkedinText = linkedin;
+    var screenshots = Object.keys(shots).map(function (key) { return shots[key]; });
+    if (screenshots.length) body.screenshots = screenshots;
+    show("auditView");
+    setStep("site");
+    var started = Date.now();
+    if (auditTimer) clearInterval(auditTimer);
+    auditTimer = setInterval(function () {
+      var elapsed = Date.now() - started;
+      setStep(elapsed < 900 ? "site" : elapsed < 2200 ? "channels" : "report");
+    }, 400);
+    try {
+      auditResult = await postAudit(body);
+      var wait = 1600 - (Date.now() - started);
+      if (wait > 0) await sleep(wait);
+      clearInterval(auditTimer);
+      renderResults();
+      show("resultsView");
+    } catch (err) {
+      clearInterval(auditTimer);
+      show("toolsView");
+      if (err.status === 429) $("rateNote").hidden = false;
+      else {
+        $("toolsError").hidden = false;
+        $("toolsError").textContent = err.message;
+      }
+    }
+  }
+
+  function setStep(step) {
+    var copy = { site: "Checking your site", channels: "Checking the channels you kept", report: "Writing your report" };
+    $("auditStatus").textContent = copy[step];
+    var seen = false;
+    Array.prototype.forEach.call($("auditSteps").children, function (li) {
+      if (li.dataset.step === step) { li.dataset.state = "active"; seen = true; }
+      else li.dataset.state = seen ? "waiting" : "done";
+    });
+  }
+
+  async function postAudit(body) {
+    await api("/api/session");
+    var res = await fetch("/api/audit", {
+      method: "POST",
+      headers: { Accept: "application/json", "Content-Type": "application/json", "X-CSRF-Token": csrf() },
+      credentials: "same-origin",
+      body: JSON.stringify(body),
+    });
+    var text = await res.text();
+    var data = null;
+    try { data = text ? JSON.parse(text) : null; } catch (err) { data = null; }
+    if (res.ok && isAuditResult(data)) return data;
+    var error = new Error((data && data.message) || "The audit did not finish. Please try again.");
+    error.status = res.status;
+    throw error;
+  }
+
+  function renderResults() {
+    var result = auditResult;
+    $("resultsTitle").textContent = "Where " + result.brand.name + " is breaking";
+    var story = $("storyBlock");
+    story.innerHTML = "";
+    if (result.storyChanges && result.storyChanges.length) {
+      story.appendChild(el("h2", { text: "Where your story changes" }));
+      if (result.storyVerdict) story.appendChild(el("p", { text: result.storyVerdict }));
+      var rows = el("ul", { class: "story-rows" });
+      result.storyChanges.forEach(function (row) {
+        var item = el("li");
+        item.appendChild(el("span", { class: "surf", text: row.label }));
+        item.appendChild(el("span", { text: row.sells }));
+        rows.appendChild(item);
+      });
+      story.appendChild(rows);
+    }
+    var score = $("scoreBlock");
+    score.innerHTML = "";
+    if (result.brand.logoUrl) score.appendChild(el("img", { class: "logo", src: result.brand.logoUrl, alt: "" }));
+    var n = Math.round(Number(result.overallScore) || 0);
+    score.appendChild(el("p", { class: "score-num", text: String(n) }));
+    score.appendChild(el("p", { class: "quiet", text: n + " out of 100. " + result.brand.name }));
+    if (result.brand.palette && result.brand.palette.length) {
+      var swatches = el("div", { class: "swatches" });
+      result.brand.palette.forEach(function (hex) {
+        swatches.appendChild(el("span", { class: "swatch", style: "background:" + hex, title: hex }));
+      });
+      score.appendChild(swatches);
+    }
+    score.appendChild(el("p", { text: result.brand.voiceSummary || "" }));
+
+    var compare = $("compareBlock");
+    compare.innerHTML = "";
+    var pairs = [];
+    (result.checks || []).forEach(function (check) {
+      (check.findings || []).forEach(function (finding) {
+        if (finding.comparison) pairs.push(finding);
+      });
+    });
+    if (pairs.length) {
+      compare.appendChild(el("h2", { text: "Side by side" }));
+      var list = el("div", { class: "compare-list" });
+      pairs.forEach(function (finding) { list.appendChild(compareCard(finding)); });
+      compare.appendChild(list);
+    }
+
+    var breaks = $("breaksBlock");
+    breaks.innerHTML = "";
+    var anyBreak = (result.checks || []).some(function (check) { return check.status === "break" && !notAssessed(check); });
+    breaks.appendChild(el("h2", { text: anyBreak ? "Where it breaks most" : "The weakest points" }));
+    if (!(result.topBreaks || []).length) breaks.appendChild(el("p", { text: "Nothing in this report was marked as weak." }));
+    (result.topBreaks || []).forEach(function (item) {
+      var card = el("article", { class: "info-card" });
+      card.appendChild(el("p", { class: "quiet", text: "Rank " + item.rank + ", " + (SURFACE[item.surface] || item.surface) }));
+      card.appendChild(el("h3", { text: item.title }));
+      card.appendChild(el("p", { text: "Why it matters: " + (item.whyItMatters || "") }));
+      card.appendChild(el("p", { text: "The cost: " + safeCost(item.cost) }));
+      breaks.appendChild(card);
+    });
+
+    var card = $("scorecardBlock");
+    card.innerHTML = "";
+    card.appendChild(el("h2", { text: "Scorecard" }));
+    var table = el("table", { class: "scorecard" });
+    table.appendChild(el("thead", {}, [el("tr", {}, [
+      el("th", { text: "Check" }), el("th", { text: "Score" }), el("th", { text: "Status" }), el("th", { text: "What we saw" }),
+    ])]));
+    var tbody = el("tbody");
+    (result.checks || []).forEach(function (check) {
+      var seen = el("td");
+      (check.findings || []).forEach(function (finding) {
+        var line = el("p");
+        line.appendChild(document.createTextNode((SURFACE[finding.surface] || finding.surface) + ": " + finding.detail + " "));
+        if (finding.evidenceUrl && /^https?:\/\//i.test(finding.evidenceUrl)) {
+          line.appendChild(el("a", { href: finding.evidenceUrl, rel: "noopener", target: "_blank", text: "Source" }));
+        }
+        seen.appendChild(line);
+      });
+      tbody.appendChild(el("tr", {}, [
+        el("td", { text: check.label }),
+        el("td", { text: String(check.score) }),
+        el("td", {}, [badgeFor(check)]),
+        seen,
+      ]));
+    });
+    table.appendChild(tbody);
+    card.appendChild(table);
+
+    var tools = $("toolsBlock");
+    tools.innerHTML = "";
+    tools.appendChild(el("h2", { text: "Tools and formats" }));
+    var pack = result.toolsAndFormats || {};
+    tools.appendChild(el("h3", { text: "Noticed" }));
+    tools.appendChild(chipList(pack.detected && pack.detected.length ? pack.detected : ["Nothing extra was noticed on the site."]));
+    tools.appendChild(el("h3", { text: "You asked for" }));
+    tools.appendChild(chipList(pack.requested || []));
+
+    var skipped = $("skippedBlock");
+    skipped.innerHTML = "";
+    skipped.appendChild(el("h2", { text: "Not checked" }));
+    if (!(result.skippedSurfaces || []).length) skipped.appendChild(el("p", { text: "Every surface you added was included." }));
+    (result.skippedSurfaces || []).forEach(function (item) {
+      skipped.appendChild(el("p", { text: (SURFACE[item.surface] || item.surface) + ": " + item.reason }));
+    });
+    $("pdfStatus").textContent = "";
+  }
+
+  function compareCard(finding) {
+    var card = el("article", { class: "info-card" });
+    card.appendChild(el("h3", { text: (SURFACE[finding.surface] || finding.surface) + ": " + finding.detail }));
+    if (finding.whyItMatters) card.appendChild(el("p", { text: finding.whyItMatters }));
+    var grid = el("div", { class: "compare" });
+    grid.appendChild(sideFigure(finding.comparison.site));
+    grid.appendChild(sideFigure(finding.comparison.other));
+    card.appendChild(grid);
+    if (finding.evidenceUrl) card.appendChild(el("a", { href: finding.evidenceUrl, rel: "noopener", target: "_blank", text: "Source" }));
     return card;
   }
 
-  async function retryPost(postId) {
-    await api("/api/posts/" + postId + "/retry", { method: "POST", body: JSON.stringify({}) });
-    runData = await api("/api/runs/" + runId);
-    renderPosts();
-  }
-
-  const layouts = {
-    carousel: ["carousel-steps", "carousel-checklist"],
-    explainer: ["explainer-framework", "explainer-comparison"],
-    proof: ["text-pov", "text-columns", "proof-annotation", "proof-split"],
-  };
-
-  function openEditor(postId) {
-    const post = (runData.posts || []).find((item) => item.id === postId);
-    if (!post) return;
-    editingPostId = postId;
-    $("editorTitle").textContent = post.title || "Edit this post";
-    $("captionField").value = post.caption || "";
-    $("altField").value = post.altText || "";
-    const hooks = $("hookSelect");
-    hooks.innerHTML = "";
-    (post.hookAlternatives || [post.hook]).forEach((hook) => {
-      const option = el("option", { value: hook, text: hook });
-      if (hook === post.hook) option.selected = true;
-      hooks.appendChild(option);
-    });
-    const layout = $("layoutSelect");
-    layout.innerHTML = "";
-    (layouts[post.formatFamily] || []).forEach((id) => {
-      const option = el("option", { value: id, text: id.replaceAll("-", " ") });
-      if (id === post.compositionId) option.selected = true;
-      layout.appendChild(option);
-    });
-    renderEditorPreview(post);
-    show("editorView");
-  }
-
-  function renderEditorPreview(post) {
-    const box = $("editorPreview");
-    box.innerHTML = "";
-    const preview = post.assets && post.assets.find((asset) => asset.kind === "png" || asset.kind === "page_png" || asset.kind === "x_png");
-    if (preview) box.appendChild(el("img", { src: "/api/post-assets/" + preview.id + "?v=" + post.revision, alt: post.altText || "" }));
-    if (post.formatFamily === "carousel") box.appendChild(el("p", { class: "pages", text: (post.pageCount || 0) + " pages" }));
-    $("editorCaption").textContent = $("captionField").value;
-  }
-
-  $("captionField").addEventListener("input", () => { $("editorCaption").textContent = $("captionField").value; });
-  $("closeEditor").addEventListener("click", () => show("resultsView"));
-  $("backToBrand").addEventListener("click", () => show("confirmView"));
-  $("tabEdit").addEventListener("click", () => { $("editorView").querySelector(".editor").className = "editor editing"; });
-  $("tabPreview").addEventListener("click", () => { $("editorView").querySelector(".editor").className = "editor previewing"; });
-
-  async function refreshEditor() {
-    runData = await api("/api/runs/" + runId);
-    const post = runData.posts.find((item) => item.id === editingPostId);
-    if (post) openEditor(post.id);
-    renderPosts();
-  }
-
-  $("saveCopy").addEventListener("click", async () => {
-    $("editorError").hidden = true;
-    try {
-      await api("/api/posts/" + editingPostId, {
-        method: "PATCH",
-        body: JSON.stringify({
-          caption: $("captionField").value,
-          altText: $("altField").value,
-          hook: $("hookSelect").value,
-        }),
+  function sideFigure(side) {
+    var figure = el("figure");
+    figure.appendChild(el("figcaption", { text: side.caption || "" }));
+    if (side.imageUrl) figure.appendChild(el("img", { class: "logo", src: side.imageUrl, alt: "" }));
+    if (side.swatches && side.swatches.length) {
+      var row = el("div", { class: "swatches" });
+      side.swatches.forEach(function (hex) {
+        row.appendChild(el("span", { class: "swatch", style: "background:" + hex, title: hex }));
       });
-      $("editorStatus").textContent = "Saved. Checks on this post were cleared until they run again. The other posts were left as they were.";
-      await refreshEditor();
-    } catch (err) {
-      $("editorError").hidden = false;
-      $("editorError").textContent = err.message;
+      figure.appendChild(row);
     }
-  });
+    if (side.text) figure.appendChild(el("p", { text: side.text }));
+    return figure;
+  }
 
-  $("shorterBtn").addEventListener("click", () => {
-    const text = $("captionField").value.trim();
-    const cut = text.split(/(?<=\.)\s/)[0] || text;
-    $("captionField").value = cut;
-    $("editorCaption").textContent = cut;
-    $("editorStatus").textContent = "Shortened in the box. Save it when you are happy. Nothing else has changed yet.";
-  });
+  function chipList(items) {
+    var list = el("div", { class: "chip-row" });
+    (items || []).forEach(function (item) { list.appendChild(el("span", { class: "choice", text: item })); });
+    return list;
+  }
 
-  $("regenBtn").addEventListener("click", async () => {
-    $("editorError").hidden = true;
-    $("editorStatus").textContent = "Regenerating this post only.";
+  function safeCost(text) {
+    if (!text || /[£$€]|\bGBP\b|\bUSD\b/i.test(text)) return "The cost is trust, rework, or a design bottleneck. No figure is shown.";
+    return text;
+  }
+
+  $("downloadPdf").addEventListener("click", async function () {
+    if (!auditResult) return;
+    $("pdfStatus").textContent = "Preparing the PDF.";
     try {
-      await api("/api/posts/" + editingPostId + "/regenerate", {
+      var res = await fetch("/api/audit/pdf", {
         method: "POST",
-        body: JSON.stringify({ instruction: $("instruction").value.trim() }),
+        headers: { Accept: "application/pdf", "Content-Type": "application/json", "X-CSRF-Token": csrf() },
+        credentials: "same-origin",
+        body: JSON.stringify(auditResult),
       });
-      await refreshEditor();
-      $("editorStatus").textContent = "This post was replaced. The other two were not.";
+      var type = res.headers.get("content-type") || "";
+      if (!res.ok || type.indexOf("pdf") === -1) {
+        var data = null;
+        try { data = JSON.parse(await res.text()); } catch (err) { data = null; }
+        throw new Error((data && data.message) || "The PDF could not be saved. Try again.");
+      }
+      var blob = await res.blob();
+      var url = URL.createObjectURL(blob);
+      var link = el("a", { href: url, download: "brand-audit.pdf" });
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      setTimeout(function () { URL.revokeObjectURL(url); }, 1500);
+      $("pdfStatus").textContent = "PDF downloaded.";
     } catch (err) {
-      $("editorError").hidden = false;
-      $("editorError").textContent = err.message;
+      $("pdfStatus").textContent = err.message || "The PDF could not be saved. Try again.";
     }
   });
 
-  $("undoBtn").addEventListener("click", async () => {
-    try {
-      await api("/api/posts/" + editingPostId + "/undo", { method: "POST", body: JSON.stringify({}) });
-      await refreshEditor();
-      $("editorStatus").textContent = "Undone.";
-    } catch (err) {
-      $("editorError").hidden = false;
-      $("editorError").textContent = err.message;
-    }
-  });
-
-  $("applyLayout").addEventListener("click", async () => {
-    try {
-      await api("/api/posts/" + editingPostId + "/layout", {
-        method: "POST",
-        body: JSON.stringify({ compositionId: $("layoutSelect").value }),
-      });
-      await refreshEditor();
-      $("editorStatus").textContent = "Layout updated for this post only.";
-    } catch (err) {
-      $("editorError").hidden = false;
-      $("editorError").textContent = err.message;
-    }
-  });
-
-  $("downloadAll").addEventListener("click", () => {
-    window.location.href = "/api/runs/" + runId + "/package.zip";
-  });
-
-  $("leadForm").addEventListener("submit", async (event) => {
-    event.preventDefault();
-    try {
-      await api("/api/brands/" + brandId + "/leads", {
-        method: "POST",
-        body: JSON.stringify({
-          email: $("leadEmail").value.trim(),
-          preferredTool: $("leadTool").value.trim(),
-          notes: $("leadNotes").value.trim(),
-          consent: $("leadConsent").checked,
-        }),
-      });
-      $("leadStatus").textContent = "Thank you. We will be in touch.";
-    } catch (err) {
-      $("leadStatus").textContent = err.message;
-    }
-  });
-
-  $("logoutBtn").addEventListener("click", async () => {
-    await api("/api/logout", { method: "POST", body: JSON.stringify({}) });
+  $("logoutBtn").addEventListener("click", async function () {
+    try { await api("/api/logout", { method: "POST", body: JSON.stringify({}) }); } catch (err) { /* reload anyway */ }
     window.location.reload();
   });
 
   async function boot() {
-    await api("/api/session");
-    const { brands } = await api("/api/brands");
-    if (!brands.length) {
+    try {
+      await api("/api/session");
+      var sample = await api("/api/audit/sample");
+      if (isAuditResult(sample)) renderSample(sample);
       show("urlView");
-      return;
+    } catch (err) {
+      var body = $("sampleBody");
+      if (body) body.textContent = err.message || "The example report could not be loaded.";
+      show("urlView");
     }
-    brandId = brands[0].id;
-    const data = await api("/api/brands/" + brandId);
-    if (data.status === "failed") {
-      show("progressView");
-      $("blockedBox").hidden = false;
-      $("blockedText").textContent = data.error || "We could not read that address.";
-      return;
-    }
-    if (data.status !== "ready") {
-      show("progressView");
-      $("progressText").textContent = "Reading your website";
-      return;
-    }
-    await openBrand(false);
-    if (data.latestRun) {
-      runId = data.latestRun.id;
-      show("resultsView");
-      if (["completed", "partial", "failed"].includes(data.latestRun.status)) {
-        runData = await api("/api/runs/" + runId);
-        renderPosts();
-      } else {
-        pollRun();
-      }
-      return;
-    }
-    show("confirmView");
   }
-  boot().catch(() => show("urlView"));
+  boot();
 })();

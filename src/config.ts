@@ -29,6 +29,8 @@ const schema = z.object({
 
   ANTHROPIC_API_KEY: z.string().optional(),
   ANTHROPIC_MODEL: z.string().default("claude-sonnet-5-5"),
+  /** Official Meta Ad Library token. When unset, that channel is not assessed. */
+  META_AD_LIBRARY_TOKEN: z.string().optional(),
 
   MAX_CONCURRENT_JOBS: z.coerce.number().int().positive().default(2),
   DAILY_RUN_LIMIT: z.coerce.number().int().positive().default(20),
